@@ -1,0 +1,13 @@
+fileFormatVersion: 2
+guid: c4186fa3a25103447a6455fc42d6cbba
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - uiCard: {instanceID: 0}
+  - generateButton: {fileID: 8034014636278570087, guid: 43bbb7a0f5727c5409c8da83a643e819, type: 3}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

@@ -1,0 +1,35 @@
+# --- CARPETAS BASURA (Se borrarán de Git) ---
+# Coincide con tu carpeta "Library" (Caché gigante)
+/[Ll]ibrary/
+
+# Coincide con tu carpeta "Temp" (Archivos temporales)
+/[Tt]emp/
+
+# Coincide con tu carpeta "Logs" (Registros de errores)
+/[Ll]ogs/
+
+# Coincide con tu carpeta "UserSettings" (Tu configuración de ventanas)
+/[Uu]serSettings/
+
+# Carpetas de Builds (Si generas el .exe)
+/[Bb]uild/
+/[Bb]uilds/
+
+# --- ARCHIVOS GENERADOS (Se borrarán) ---
+# Coincide con "Assembly-CSharp.csproj" y similares
+*.csproj
+*.unityproj
+*.sln
+*.slnx
+
+# Coincide con tu carpeta ".vscode" (Configuración de tu editor)
+.vscode/
+.vs/
+.idea/
+
+# Basura del sistema operativo
+.DS_Store
+Thumbs.db
+
+# --- LO QUE SE QUEDA (Importante) ---
+!*.meta
