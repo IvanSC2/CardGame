@@ -5,7 +5,7 @@ public class Card
 {
     public int id;
     public string cardName;
-    public string suit;       // Corazones, Diamantes, Tréboles, Picas, tu puta madre montada en un poni
+    public string suit;       // Corazones, Diamantes, Tréboles, Picas,
     public string rank;       // As, 2, 3, ..., Rey
     public int value;         // Valor numérico útil para la lógica del juego
     public Sprite artwork;    // Imagen de la carta

@@ -11,7 +11,7 @@ public class CardDatabase : MonoBehaviour
     {
         GenerateDeck();
     }
-
+    //Genera una Deck y la baraja
     public static void GenerateDeck()
     {
         deck.Clear();
@@ -27,10 +27,12 @@ public class CardDatabase : MonoBehaviour
                 id++;
             }
         }
-
+        //Cada vez que se crea una deck se baraja
         Shuffle(deck);
     }
 
+
+    //devuelve una carta alatoria del mazo
     public static Card GetRandomCard()
     {
         // Si por lo que sea el mazo está vacío, lo regeneramos
@@ -42,7 +44,7 @@ public class CardDatabase : MonoBehaviour
         int index = Random.Range(0, deck.Count);
         return deck[index];
     }
-
+    //Baraja la deck y devuelve una lista de cartas (new Deck)
     public static void Shuffle(List<Card> list)
     {
         for (int i = 0; i < list.Count; i++)
