@@ -55,4 +55,24 @@ public class CardDatabase : MonoBehaviour
             list[randomIndex] = temp;
         }
     }
+
+    // Método para ROBAR una carta (Sacarla del mazo)
+    public static Card DrawTopCard()
+    {
+        // 1. Seguridad: Si no quedan cartas, avisamos o regeneramos
+        if (deck.Count <= 0)
+        {
+            Debug.LogWarning("¡El mazo se ha terminado! Barajando de nuevo...");
+            GenerateDeck(); // O return null si quieres que se acabe el juego
+        }
+
+        // 2. Coger la primera carta de la lista (la de arriba)
+        Card cardToReturn = deck[0];
+
+        // 3. ELIMINARLA de la lista (Aquí está la magia de "no repetir")
+        deck.RemoveAt(0);
+
+        // 4. Entregarla
+        return cardToReturn;
+    }
 }
