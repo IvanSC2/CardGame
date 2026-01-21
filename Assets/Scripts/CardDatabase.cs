@@ -9,10 +9,19 @@ public class CardDatabase : MonoBehaviour
 
     void Awake()
     {
-        GenerateDeck();
+        GenerateOrderDeck();
     }
     //Genera una Deck y la baraja
     public static void GenerateDeck()
+    {
+        GetDeck(true);
+    }
+
+    public static void GenerateOrderDeck()
+    {
+        GetDeck(false);
+    }
+    public static void GetDeck(bool shuffle)
     {
         deck.Clear();
         int id = 0;
@@ -27,10 +36,16 @@ public class CardDatabase : MonoBehaviour
                 id++;
             }
         }
+
+        if(shuffle== true)
+        {
+            Shuffle();    
+        }
         //Cada vez que se crea una deck se baraja
-        Shuffle(deck);
+        
     }
 
+    // Añade esto a CardDatabase.cs
 
     //devuelve una carta alatoria del mazo
     public static Card GetRandomCard()
@@ -38,41 +53,40 @@ public class CardDatabase : MonoBehaviour
         // Si por lo que sea el mazo está vacío, lo regeneramos
         if (deck == null || deck.Count == 0)
         {
-            GenerateDeck();
+            Debug.LogWarning("¡Crea una Nueva baraja");
         }
 
         int index = Random.Range(0, deck.Count);
         return deck[index];
     }
     //Baraja la deck y devuelve una lista de cartas (new Deck)
-    public static void Shuffle(List<Card> list)
+    public static void Shuffle()
     {
-        for (int i = 0; i < list.Count; i++)
-        {
-            Card temp = list[i];
-            int randomIndex = Random.Range(i, list.Count);
-            list[i] = list[randomIndex];
-            list[randomIndex] = temp;
-        }
+        // Usamos directamente 'deck', que es la instancia estática de la baraja
+    for (int i = 0; i < deck.Count; i++)
+    {
+        Card temp = deck[i];
+        int randomIndex = Random.Range(i, deck.Count);
+        deck[i] = deck[randomIndex];
+        deck[randomIndex] = temp;
+    }
+    
+    Debug.Log("La baraja ha sido mezclada.");
     }
 
     // Método para ROBAR una carta (Sacarla del mazo)
     public static Card DrawTopCard()
+{
+    // 1. Seguridad total: Si no hay cartas, devolvemos NULL inmediatamente
+    if (deck == null || deck.Count <= 0)
     {
-        // 1. Seguridad: Si no quedan cartas, avisamos o regeneramos
-        if (deck.Count <= 0)
-        {
-            Debug.LogWarning("¡El mazo se ha terminado! Barajando de nuevo...");
-            GenerateDeck(); // O return null si quieres que se acabe el juego
-        }
-
-        // 2. Coger la primera carta de la lista (la de arriba)
-        Card cardToReturn = deck[0];
-
-        // 3. ELIMINARLA de la lista (Aquí está la magia de "no repetir")
-        deck.RemoveAt(0);
-
-        // 4. Entregarla
-        return cardToReturn;
+        Debug.LogWarning("¡El mazo se ha terminado! Saca Otra Baraja Nueva");
+        return null; // Salimos del método entregando "nada"
     }
+
+    // 2. Si llegamos aquí, es que SÍ hay cartas
+    Card cardToReturn = deck[0];
+    deck.RemoveAt(0);
+    return cardToReturn;
+}
 }
