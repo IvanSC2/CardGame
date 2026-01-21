@@ -2,8 +2,9 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using System.Collections.Generic;
+using UnityEngine.EventSystems;
 
-public class UICard : MonoBehaviour
+public class UICard : MonoBehaviour , IPointerClickHandler
 {
     [Header("Rank Texts")]
     public TMP_Text rankTop;
@@ -144,5 +145,16 @@ public class UICard : MonoBehaviour
         // /Assets/Resources/Suits/Tréboles.png
         // /Assets/Resources/Suits/Picas.png
         return Resources.Load<Sprite>($"Suits/{suit}");
+    }
+
+    // Este método se dispara automáticamente cuando haces clic en el objeto UI
+    public void OnPointerClick(PointerEventData eventData)
+    {
+        // Le decimos al manager: "¡Eh! Me han clicado a mí"
+        InteractionManager.Instance.SelectCard(this);
+        
+        // (Opcional) Feedback visual rápido para saber que funcionó
+        // Por ejemplo, oscurecer un poco la carta seleccionada
+        GetComponent<Image>().color = Color.yellow; 
     }
 }
