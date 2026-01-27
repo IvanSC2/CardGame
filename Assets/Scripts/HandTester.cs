@@ -27,6 +27,12 @@ public class HandTester : MonoBehaviour
     public void DrawNewHand()
 {
     PrepararVista(esGrid: false);
+
+        if (TableZone.Instance != null)
+        {
+            
+            TableZone.Instance.ClearTableNow();
+        }
     
     for (int i = 0; i < 5; i++)
     {
@@ -40,6 +46,10 @@ public class HandTester : MonoBehaviour
         }
 
         InstanciarCarta(data, handArea);
+    }
+    if (InteractionManager.Instance != null)
+    {
+        InteractionManager.Instance.InitializeGame();
     }
 }
 

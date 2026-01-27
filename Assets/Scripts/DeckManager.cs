@@ -18,6 +18,10 @@ public class DeckManager : MonoBehaviour
     public void newDeck()
     {
         CardDatabase.GenerateOrderDeck();
+        if (TableZone.Instance != null)
+        {
+            TableZone.Instance.ClearTableNow();
+        }
     }
 
     public void shuffleDeck()

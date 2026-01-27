@@ -1,56 +1,131 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
+using System.Collections;
+using TMPro; // <--- 1. IMPORTANTE: Necesario para que Unity entienda qué es un Texto
 
 public class TableZone : MonoBehaviour, IPointerClickHandler
 {
+    public static TableZone Instance;
+
+    [Header("Marcadores UI")]
+    public TMP_Text scoreTextP1; // Arrastra aquí el texto de "P1: 0"
+    public TMP_Text scoreTextP2; // Arrastra aquí el texto de "P2: 0"
+
+    [Header("Lógica Interna")]
+    public int p1Wins = 0;
+    public int p2Wins = 0;
+    public int bazasJugadas = 0;
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
+    public void ResetStats()
+    {
+        p1Wins = 0;
+        p2Wins = 0;
+        bazasJugadas = 0;
+        
+        ClearTableNow();
+        UpdateUI(); // <--- 2. Pone los marcadores a 0 al empezar
+    }
+
+    public void ClearTableNow()
+    {
+        foreach (Transform child in this.transform) Destroy(child.gameObject);
+    }
+
     public void OnPointerClick(PointerEventData eventData)
     {
-        // Solo hacemos algo si hay una carta seleccionada esperando moverse
         if (InteractionManager.Instance.HasCardSelected())
         {
             UICard cardToMove = InteractionManager.Instance.SelectedCard;
 
-            // --- 1. CONGELAR TAMAÑO (Lógica Visual) ---
+            // --- Lógica Visual y Movimiento ---
             CardResizer resizer = cardToMove.GetComponent<CardResizer>();
-            Vector3 finalVisualScale = Vector3.one;
-
+            Vector3 finalScale = Vector3.one;
             if (resizer != null)
             {
-                // Guardamos el tamaño actual de los dibujos internos
-                finalVisualScale = resizer.targetVisuals.localScale;
-                // Apagamos el redimensionador automático
-                resizer.enabled = false; 
+                finalScale = resizer.targetVisuals.localScale;
+                resizer.enabled = false;
             }
 
-            // --- 2. MOVER Y POSICIONAR (Lógica Física) ---
             cardToMove.transform.SetParent(this.transform);
-            cardToMove.transform.localPosition = Vector3.zero; // Al centro de la pila
-            cardToMove.transform.localScale = Vector3.one;     // Escala del contenedor a 1
-
-            // Restauramos el tamaño de los dibujos internos
-            if (resizer != null)
-            {
-                resizer.targetVisuals.localScale = finalVisualScale;
-            }
-
-            // (Opcional) Restaurar color por si se quedó amarillo
+            cardToMove.transform.localPosition = Vector3.zero;
+            cardToMove.transform.localScale = Vector3.one;
+            if (resizer != null) resizer.targetVisuals.localScale = finalScale;
             cardToMove.GetComponent<UnityEngine.UI.Image>().color = Color.white;
 
-            // --- 3. NUEVO: BLOQUEAR INTERACCIÓN (Lógica de Estado) ---
-            // Buscamos o añadimos un CanvasGroup para controlar si recibe clics
+            // Bloqueo
             CanvasGroup group = cardToMove.GetComponent<CanvasGroup>();
-            if (group == null)
-            {
-                // Si la carta no tenía este componente, se lo ponemos ahora mismo por código
-                group = cardToMove.gameObject.AddComponent<CanvasGroup>();
-            }
-            
-            // ¡AQUÍ ESTÁ LA CLAVE!
-            // Al poner esto en false, el ratón ignorará esta carta para siempre.
-            group.blocksRaycasts = false; 
+            if (group == null) group = cardToMove.gameObject.AddComponent<CanvasGroup>();
+            group.blocksRaycasts = false;
 
-            // --- 4. FINALIZAR ---
             InteractionManager.Instance.ClearSelection();
+            InteractionManager.Instance.ChangeTurn();
+
+            // --- Resolver Baza ---
+            if (this.transform.childCount == 2)
+            {
+                CheckWinner();
+                StartCoroutine(CleanTableRoutine());
+            }
         }
+    }
+
+    private void CheckWinner()
+    {
+        UICard card1 = this.transform.GetChild(0).GetComponent<UICard>();
+        UICard card2 = this.transform.GetChild(1).GetComponent<UICard>();
+
+        int score1 = CalculateScore(card1.cardData);
+        int score2 = CalculateScore(card2.cardData);
+        
+        bazasJugadas++;
+
+        // Sumamos puntos
+        if (score1 > score2)
+        {
+            p1Wins++;
+            Debug.Log("Gana P1");
+        }
+        else if (score2 > score1)
+        {
+            p2Wins++;
+            Debug.Log("Gana P2");
+        }
+
+        // <--- 3. ¡AQUÍ ESTÁ LA CLAVE! Actualizamos lo que ve el jugador
+        UpdateUI(); 
+
+        if (bazasJugadas >= 5) Debug.Log("FIN DE PARTIDA");
+    }
+
+    // Método dedicado exclusivamente a pintar los textos
+    private void UpdateUI()
+    {
+        // El '?' es un truco de seguridad: si se te olvida arrastrar el texto, no da error, solo lo ignora.
+        scoreTextP1?.SetText($"P1: {p1Wins}");
+        scoreTextP2?.SetText($"P2: {p2Wins}");
+    }
+
+    IEnumerator CleanTableRoutine()
+    {
+        yield return new WaitForSeconds(1.5f);
+        ClearTableNow();
+    }
+
+    private int CalculateScore(Card card)
+    {
+        int suitValue = 0;
+        switch (card.suit)
+        {
+            case "Tréboles": suitValue = 1; break;
+            case "Picas": suitValue = 2; break;
+            case "Corazones": suitValue = 3; break;
+            case "Diamantes": suitValue = 4; break;
+        }
+        return (card.value * 10) + suitValue;
     }
 }

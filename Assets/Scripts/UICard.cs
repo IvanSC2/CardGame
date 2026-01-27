@@ -6,6 +6,7 @@ using UnityEngine.EventSystems;
 
 public class UICard : MonoBehaviour , IPointerClickHandler
 {
+    public Card cardData;
     [Header("Rank Texts")]
     public TMP_Text rankTop;
     public TMP_Text rankBottom;
@@ -21,8 +22,12 @@ public class UICard : MonoBehaviour , IPointerClickHandler
     [Header("Artwork")]
     public GameObject artworkFace;
 
+
+    
     public void SetCard(Card card)
     {
+        //Guardo la carta
+        this.cardData = card;
         // --- Rank ---
         rankTop.text = card.rank;
         rankBottom.text = card.rank;
