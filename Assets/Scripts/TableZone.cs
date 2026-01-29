@@ -50,8 +50,9 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
                 finalScale = resizer.targetVisuals.localScale;
                 resizer.enabled = false;
             }
-
+            //Mueve de handArea a CoTable
             cardToMove.transform.SetParent(this.transform);
+            //Lo pone en el centro
             cardToMove.transform.localPosition = Vector3.zero;
             cardToMove.transform.localScale = Vector3.one;
             if (resizer != null) resizer.targetVisuals.localScale = finalScale;
