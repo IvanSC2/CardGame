@@ -2,6 +2,9 @@ using UnityEngine;
 
 
 public enum GameState {P1_TURN,P2_TURN,WAITING}
+
+
+
 public class InteractionManager : MonoBehaviour
 {
 
@@ -17,6 +20,8 @@ public class InteractionManager : MonoBehaviour
     public GameState currentState;
     
     public UICard SelectedCard { get; private set; }
+
+    public bool isPaused = false;
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     private void Awake()
     {
@@ -25,10 +30,12 @@ public class InteractionManager : MonoBehaviour
         
         // Empezamos en WAITING hasta que se repartan cartas
         currentState = GameState.WAITING;
+        UpdateVisualStates();
     }
 
     public void InitializeGame()
     {
+        isPaused= false;
         currentState = GameState.P1_TURN;
         UpdateVisualStates();
     }
@@ -62,18 +69,33 @@ public class InteractionManager : MonoBehaviour
     }
 
     // El efecto "Gris" y bloqueo
-    private void UpdateVisualStates()
+   public void UpdateVisualStates()
     {
-        // Si es turno de P1: P1 opaco(1) y activo. P2 gris(0.5) y bloqueado.
-        handGroupP1.alpha = (currentState == GameState.P1_TURN) ? 1.0f : 0.5f;
-        handGroupP1.interactable = (currentState == GameState.P1_TURN);
-        handGroupP1.blocksRaycasts = (currentState == GameState.P1_TURN);
+        // --- NUEVA LÓGICA DE BLOQUEO VISUAL ---
+        if (isPaused)
+        {
+            // Si está pausado, BLOQUEAMOS A LOS DOS
+            SetGroupState(handGroupP1, false, 0.5f);
+            SetGroupState(handGroupP2, false, 0.5f);
+            return;
+        }
 
-        handGroupP2.alpha = (currentState == GameState.P2_TURN) ? 1.0f : 0.5f;
-        handGroupP2.interactable = (currentState == GameState.P2_TURN);
-        handGroupP2.blocksRaycasts = (currentState == GameState.P2_TURN);
+        // Comportamiento normal de turnos
+        SetGroupState(handGroupP1, currentState == GameState.P1_TURN, currentState == GameState.P1_TURN ? 1f : 0.5f);
+        SetGroupState(handGroupP2, currentState == GameState.P2_TURN, currentState == GameState.P2_TURN ? 1f : 0.5f);
     }
 
+
+    // Helper para no repetir código
+    private void SetGroupState(CanvasGroup group, bool active, float alpha)
+    {
+        if (group != null)
+        {
+            group.interactable = active;
+            group.blocksRaycasts = active;
+            group.alpha = alpha;
+        }
+    }
     // Método llamado por la mesa al recibir la carta
     public void ClearSelection()
     {

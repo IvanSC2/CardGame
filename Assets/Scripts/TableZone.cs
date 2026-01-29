@@ -63,13 +63,24 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
             group.blocksRaycasts = false;
 
             InteractionManager.Instance.ClearSelection();
-            InteractionManager.Instance.ChangeTurn();
+           
 
-            // --- Resolver Baza ---
-            if (this.transform.childCount == 2)
+           if (this.transform.childCount == 2)
             {
+                // 1. ¡PAUSA EL JUEGO! Nadie toca nada.
+                InteractionManager.Instance.isPaused = true;
+                InteractionManager.Instance.UpdateVisualStates(); // Pone todo gris
+
+                // 2. Comprobamos quién ganó
                 CheckWinner();
+
+                // 3. Empezamos la limpieza con retraso
                 StartCoroutine(CleanTableRoutine());
+            }
+            else
+            {
+                // Si solo hay 1 carta, cambiamos el turno normalmente
+                InteractionManager.Instance.ChangeTurn();
             }
         }
     }
@@ -99,7 +110,13 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         // <--- 3. ¡AQUÍ ESTÁ LA CLAVE! Actualizamos lo que ve el jugador
         UpdateUI(); 
 
-        if (bazasJugadas >= 5) Debug.Log("FIN DE PARTIDA");
+        if (bazasJugadas >= 5) {Debug.Log("FIN DE PARTIDA");
+        bazasJugadas=0;
+        p1Wins=0;
+        p2Wins=0;
+        UpdateUI();
+        
+        }
     }
 
     // Método dedicado exclusivamente a pintar los textos
@@ -114,6 +131,13 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
     {
         yield return new WaitForSeconds(1.5f);
         ClearTableNow();
+        // --- DESBLOQUEO ---
+        // 1. Quitamos la pausa
+        InteractionManager.Instance.isPaused = false;
+        
+        // 2. Y AHORA cambiamos el turno para que juegue el siguiente
+        // (Esto reactivará los colores de las manos correctamente)
+        InteractionManager.Instance.ChangeTurn();
     }
 
     private int CalculateScore(Card card)
