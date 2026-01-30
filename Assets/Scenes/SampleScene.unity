@@ -1649,8 +1649,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: aa0e0ce94716a5643b70103ff3b6b0a0, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BettingManager
-  panelRoot: {fileID: 0}
-  titleText: {fileID: 0}
+  panelRoot: {fileID: 1678389902}
+  titleText: {fileID: 983277172}
   betButtons:
   - {fileID: 550654104}
   - {fileID: 1760996108}
@@ -1658,6 +1658,7 @@ MonoBehaviour:
   - {fileID: 166538241}
   - {fileID: 1523096976}
   - {fileID: 656088908}
+  tableObject: {fileID: 1229002729}
   cardsInRound: 5
   p1Bet: 0
   p2Bet: 0

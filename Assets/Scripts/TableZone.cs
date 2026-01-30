@@ -111,13 +111,34 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         // <--- 3. ¡AQUÍ ESTÁ LA CLAVE! Actualizamos lo que ve el jugador
         UpdateUI(); 
 
-        if (bazasJugadas >= 5) {Debug.Log("FIN DE PARTIDA");
-        bazasJugadas=0;
-        p1Wins=0;
-        p2Wins=0;
-        UpdateUI();
-        
+        if (bazasJugadas >= 5) 
+    {
+        Debug.Log("--- 🏁 FIN DE LA MANO: RESULTADOS ---");
+
+        // 1. Obtenemos las apuestas que guardamos en el BettingManager
+        int apuestaP1 = BettingManager.Instance.p1Bet;
+        int apuestaP2 = BettingManager.Instance.p2Bet;
+
+        // 2. Comparamos Jugador 1
+        if (p1Wins == apuestaP1) {
+            Debug.Log($"<color=green>P1 ha acertado:</color> Ganó {p1Wins} de {apuestaP1} apostadas.");
+        } else {
+            Debug.Log($"<color=red>P1 PIERDE VIDA:</color> Ganó {p1Wins} pero dijo que ganaría {apuestaP1}.");
         }
+
+        // 3. Comparamos Jugador 2
+        if (p2Wins == apuestaP2) {
+            Debug.Log($"<color=green>P2 ha acertado:</color> Ganó {p2Wins} de {apuestaP2} apostadas.");
+        } else {
+            Debug.Log($"<color=red>P2 PIERDE VIDA:</color> Ganó {p2Wins} pero dijo que ganaría {apuestaP2}.");
+        }
+
+        // 4. Reset para la siguiente mano
+        bazasJugadas = 0;
+        p1Wins = 0;
+        p2Wins = 0;
+        UpdateUI();
+    }
     }
 
     // Método dedicado exclusivamente a pintar los textos

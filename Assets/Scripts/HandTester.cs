@@ -47,9 +47,9 @@ public class HandTester : MonoBehaviour
 
         InstanciarCarta(data, handArea);
     }
-    if (InteractionManager.Instance != null)
+    if (BettingManager.Instance != null)
     {
-        InteractionManager.Instance.InitializeGame();
+        BettingManager.Instance.StartBettingPhase(5); // 5 cartas esta ronda
     }
 }
 

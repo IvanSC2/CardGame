@@ -160,6 +160,6 @@ public class UICard : MonoBehaviour , IPointerClickHandler
         
         // (Opcional) Feedback visual rápido para saber que funcionó
         // Por ejemplo, oscurecer un poco la carta seleccionada
-        GetComponent<Image>().color = Color.yellow; 
+       // GetComponent<Image>().color = Color.yellow; 
     }
 }

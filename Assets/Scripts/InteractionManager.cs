@@ -41,23 +41,40 @@ public class InteractionManager : MonoBehaviour
     }
     // Método llamado por la carta al ser clicada
     public void SelectCard(UICard card)
-    {
-        // SEGURIDAD: Solo permitimos seleccionar si la carta pertenece al jugador del turno actual
-        // Para esto, comprobaremos el padre de la carta
-        bool isP1Card = card.transform.parent == handGroupP1.transform;
-        bool isP2Card = card.transform.parent == handGroupP2.transform;
+{
+    // 1. Verificación de pertenencia y turno
+    bool isP1Card = card.transform.parent == handGroupP1.transform;
+    bool isP2Card = card.transform.parent == handGroupP2.transform;
 
-        if ((currentState == GameState.P1_TURN && isP1Card) || 
-            (currentState == GameState.P2_TURN && isP2Card))
+    bool canSelect = (currentState == GameState.P1_TURN && isP1Card) || 
+                    (currentState == GameState.P2_TURN && isP2Card);
+
+    if (canSelect)
+    {
+        // CASO 1: Pulsas la misma carta que ya tenías (Deseleccionar)
+        if (SelectedCard == card)
         {
-            SelectedCard = card;
-            Debug.Log("Carta seleccionada correctamente.");
+            ClearSelection();
+            Debug.Log("Misma carta pulsada: Deseleccionando.");
+            return; 
         }
-        else
+
+        // CASO 2: Tenías otra carta antes (Limpiar color de la anterior)
+        if (SelectedCard != null)
         {
-            Debug.Log("No es tu turno o no es tu carta.");
+            SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
         }
+
+        // CASO 3: Nueva selección
+        SelectedCard = card;
+        SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.yellow;
+        Debug.Log("Nueva carta seleccionada: " + card.name);
     }
+    else
+    {
+        Debug.Log("No es tu turno o no es tu carta.");
+    }
+}
 
     public void ChangeTurn()
     {
@@ -99,8 +116,14 @@ public class InteractionManager : MonoBehaviour
     // Método llamado por la mesa al recibir la carta
     public void ClearSelection()
     {
-        SelectedCard = null;
-        Debug.Log("Selección limpiada.");
+        // Siempre que limpiamos la selección, aseguramos que el color vuelva a blanco
+    if (SelectedCard != null)
+    {
+        SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
+    }
+    
+    SelectedCard = null;
+    Debug.Log("Selección reseteada.");
     }
 
     // Utilidad para saber si hay algo seleccionado

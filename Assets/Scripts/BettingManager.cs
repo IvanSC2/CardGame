@@ -10,7 +10,8 @@ public class BettingManager : MonoBehaviour
     public GameObject panelRoot;
     public TextMeshProUGUI titleText;
     public Button[] betButtons; // Arrastra los 6 botones aquí (índice 0 = apuesta 0)
-
+    [Header("Referencias de Escena")]
+public GameObject tableObject; // Arrastra el CoTable aquí
     [Header("Game State")]
     public int cardsInRound = 5;
     public int p1Bet;
@@ -33,8 +34,10 @@ public class BettingManager : MonoBehaviour
 
     public void StartBettingPhase(int numCards)
     {
+
         cardsInRound = numCards;
         isP1Choosing = true;
+        tableObject.SetActive(false);
         panelRoot.SetActive(true);
         SetupUIForP1();
     }
@@ -76,6 +79,9 @@ public class BettingManager : MonoBehaviour
             panelRoot.SetActive(false);
             Debug.Log($"Apuestas cerradas: P1:{p1Bet}, P2:{p2Bet}");
             
+
+            tableObject.SetActive(true); // ¡No olvides encenderla al terminar!
+            panelRoot.SetActive(false);
             // Iniciamos el juego real
             InteractionManager.Instance.InitializeGame();
         }
