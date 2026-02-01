@@ -7,9 +7,13 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
 {
     public static TableZone Instance;
 
-    [Header("Marcadores UI")]
+    [Header("Marcadores Bazas")]
     public TMP_Text scoreTextP1; // Arrastra aquí el texto de "P1: 0"
     public TMP_Text scoreTextP2; // Arrastra aquí el texto de "P2: 0"
+
+    [Header("Marcadores Vidas")]
+    public TMP_Text livesTextP1; // Arrastra un texto nuevo aquí (ej: "♥♥♥")
+    public TMP_Text livesTextP2; // Arrastra un texto nuevo aquí
 
     [Header("Lógica Interna")]
     public int p1Wins = 0;
@@ -86,6 +90,15 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         }
     }
 
+
+    private string GetHeartsString(int lives)
+{
+    // Si tiene 0 o menos, devolvemos string vacío o una calavera ☠️
+    if (lives <= 0) return "";
+    
+    // Truco de C# para repetir un carácter X veces
+    return new string('♥', lives); 
+}
     private void CheckWinner()
     {
         UICard card1 = this.transform.GetChild(0).GetComponent<UICard>();
@@ -115,39 +128,69 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
     {
         Debug.Log("--- 🏁 FIN DE LA MANO: RESULTADOS ---");
 
-        // 1. Obtenemos las apuestas que guardamos en el BettingManager
-        int apuestaP1 = BettingManager.Instance.p1Bet;
-        int apuestaP2 = BettingManager.Instance.p2Bet;
+    int apuestaP1 = BettingManager.Instance.p1Bet;
+    int apuestaP2 = BettingManager.Instance.p2Bet;
 
-        // 2. Comparamos Jugador 1
-        if (p1Wins == apuestaP1) {
-            Debug.Log($"<color=green>P1 ha acertado:</color> Ganó {p1Wins} de {apuestaP1} apostadas.");
-        } else {
-            Debug.Log($"<color=red>P1 PIERDE VIDA:</color> Ganó {p1Wins} pero dijo que ganaría {apuestaP1}.");
-        }
+    // --- JUGADOR 1 ---
+    if (p1Wins == apuestaP1) {
+        Debug.Log($"<color=green>P1 CUMPLE:</color> Mantiene sus vidas.");
+    } else {
+        InteractionManager.Instance.p1Vidas--; // 🔥 RESTA VIDA
+        Debug.Log($"<color=red>P1 FALLA:</color> Pierde un corazón.");
+    }
 
-        // 3. Comparamos Jugador 2
-        if (p2Wins == apuestaP2) {
-            Debug.Log($"<color=green>P2 ha acertado:</color> Ganó {p2Wins} de {apuestaP2} apostadas.");
-        } else {
-            Debug.Log($"<color=red>P2 PIERDE VIDA:</color> Ganó {p2Wins} pero dijo que ganaría {apuestaP2}.");
-        }
+    // --- JUGADOR 2 ---
+    if (p2Wins == apuestaP2) {
+        Debug.Log($"<color=green>P2 CUMPLE:</color> Mantiene sus vidas.");
+    } else {
+        InteractionManager.Instance.p2Vidas--; // 🔥 RESTA VIDA
+        Debug.Log($"<color=red>P2 FALLA:</color> Pierde un corazón.");
+    }
 
-        // 4. Reset para la siguiente mano
-        bazasJugadas = 0;
-        p1Wins = 0;
-        p2Wins = 0;
-        UpdateUI();
+    // 1. Actualizamos visualmente INMEDIATAMENTE para que se vea el corazón desaparecer
+    UpdateUI();
+
+    // 2. Comprobamos Game Over (Opcional por ahora)
+    if (InteractionManager.Instance.p1Vidas <= 0 || InteractionManager.Instance.p2Vidas <= 0)
+    {
+        Debug.Log("💀 GAME OVER PARA ALGUIEN 💀");
+        // Aquí llamarías a tu pantalla de fin de partida
+    }
+
+    // 3. Limpieza normal
+    StartCoroutine(CleanTableRoutine());
+    
+    // Reset contadores de la ronda
+    bazasJugadas = 0;
+    p1Wins = 0;
+    p2Wins = 0;
     }
     }
 
     // Método dedicado exclusivamente a pintar los textos
     private void UpdateUI()
+{
+    // Actualiza Puntos
+    scoreTextP1?.SetText($"P1: {p1Wins}");
+    scoreTextP2?.SetText($"P2: {p2Wins}");
+
+    // Actualiza Vidas (Usando el Singleton)
+    if (InteractionManager.Instance != null)
     {
-        // El '?' es un truco de seguridad: si se te olvida arrastrar el texto, no da error, solo lo ignora.
-        scoreTextP1?.SetText($"P1: {p1Wins}");
-        scoreTextP2?.SetText($"P2: {p2Wins}");
+        string p1Corazones = GetHeartsString(InteractionManager.Instance.p1Vidas);
+        string p2Corazones = GetHeartsString(InteractionManager.Instance.p2Vidas);
+
+        livesTextP1?.SetText(p1Corazones);
+        livesTextP2?.SetText(p2Corazones);
+        
+        // Opcional: Cambiar color si queda 1 vida (Feedback visual)
+        if (livesTextP1 != null) 
+            livesTextP1.color = (InteractionManager.Instance.p1Vidas == 1) ? Color.red : Color.white;
+            
+        if (livesTextP2 != null) 
+            livesTextP2.color = (InteractionManager.Instance.p2Vidas == 1) ? Color.red : Color.white;
     }
+}
 
     IEnumerator CleanTableRoutine()
     {

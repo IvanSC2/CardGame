@@ -12,7 +12,9 @@ public class InteractionManager : MonoBehaviour
     public static InteractionManager Instance;
     //Carta que tenemos en la mano
     
-
+    [Header("Estadísticas de Jugador")]
+    public int p1Vidas = 3; // Empezamos con 3 corazones
+    public int p2Vidas = 3;
     [Header("Referencias de Turno")]
     public CanvasGroup handGroupP1; // Arrastra el CanvasGroup del HandArea P1
     public CanvasGroup handGroupP2; // Arrastra el CanvasGroup del HandArea P2
