@@ -1,19 +1,19 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
 using System.Collections;
-using TMPro; // <--- 1. IMPORTANTE: Necesario para que Unity entienda qué es un Texto
+using TMPro; 
 
 public class TableZone : MonoBehaviour, IPointerClickHandler
 {
     public static TableZone Instance;
 
     [Header("Marcadores Bazas")]
-    public TMP_Text scoreTextP1; // Arrastra aquí el texto de "P1: 0"
-    public TMP_Text scoreTextP2; // Arrastra aquí el texto de "P2: 0"
+    public TMP_Text scoreTextP1; 
+    public TMP_Text scoreTextP2; 
 
     [Header("Marcadores Vidas")]
-    public TMP_Text livesTextP1; // Arrastra un texto nuevo aquí (ej: "♥♥♥")
-    public TMP_Text livesTextP2; // Arrastra un texto nuevo aquí
+    public TMP_Text livesTextP1; 
+    public TMP_Text livesTextP2; 
 
     [Header("Lógica Interna")]
     public int p1Wins = 0;
@@ -32,7 +32,7 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         bazasJugadas = 0;
         
         ClearTableNow();
-        UpdateUI(); // <--- 2. Pone los marcadores a 0 al empezar
+        UpdateUI(); 
     }
 
     public void ClearTableNow()
@@ -54,51 +54,43 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
                 finalScale = resizer.targetVisuals.localScale;
                 resizer.enabled = false;
             }
-            //Mueve de handArea a CoTable
+            
+            // Mover a la mesa
             cardToMove.transform.SetParent(this.transform);
-            //Lo pone en el centro
             cardToMove.transform.localPosition = Vector3.zero;
             cardToMove.transform.localScale = Vector3.one;
+            
             if (resizer != null) resizer.targetVisuals.localScale = finalScale;
             cardToMove.GetComponent<UnityEngine.UI.Image>().color = Color.white;
 
-            // Bloqueo
+            // Desbloquear Raycasts
             CanvasGroup group = cardToMove.GetComponent<CanvasGroup>();
             if (group == null) group = cardToMove.gameObject.AddComponent<CanvasGroup>();
             group.blocksRaycasts = false;
 
             InteractionManager.Instance.ClearSelection();
-           
 
-           if (this.transform.childCount == 2)
+            // Lógica de Juego (Si ya hay 2 cartas)
+            if (this.transform.childCount == 2)
             {
-                // 1. ¡PAUSA EL JUEGO! Nadie toca nada.
+                // 1. Pausa visual
                 InteractionManager.Instance.isPaused = true;
-                InteractionManager.Instance.UpdateVisualStates(); // Pone todo gris
+                InteractionManager.Instance.UpdateVisualStates(); 
 
-                // 2. Comprobamos quién ganó
+                // 2. Comprobar resultado de la baza
                 CheckWinner();
-
-                // 3. Empezamos la limpieza con retraso
-                StartCoroutine(CleanTableRoutine());
+                
+                // Nota: La limpieza (CleanTableRoutine) se llama desde CheckWinner
+                // dependiendo de si se acabó la ronda o no.
             }
             else
             {
-                // Si solo hay 1 carta, cambiamos el turno normalmente
+                // Si solo hay 1 carta, cambia turno
                 InteractionManager.Instance.ChangeTurn();
             }
         }
     }
 
-
-    private string GetHeartsString(int lives)
-{
-    // Si tiene 0 o menos, devolvemos string vacío o una calavera ☠️
-    if (lives <= 0) return "";
-    
-    // Truco de C# para repetir un carácter X veces
-    return new string('♥', lives); 
-}
     private void CheckWinner()
     {
         UICard card1 = this.transform.GetChild(0).GetComponent<UICard>();
@@ -107,102 +99,172 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         int score1 = CalculateScore(card1.cardData);
         int score2 = CalculateScore(card2.cardData);
         
-        bazasJugadas++;
+        bazasJugadas++; 
 
-        // Sumamos puntos
+        // --- 1. Determinar Ganador de BAZA ---
         if (score1 > score2)
         {
             p1Wins++;
-            Debug.Log("Gana P1");
+            InteractionManager.Instance.SetInfoMessage("¡JUGADOR 1 GANA LA BAZA!");
         }
         else if (score2 > score1)
         {
             p2Wins++;
-            Debug.Log("Gana P2");
+            InteractionManager.Instance.SetInfoMessage("¡JUGADOR 2 GANA LA BAZA!");
         }
 
-        // <--- 3. ¡AQUÍ ESTÁ LA CLAVE! Actualizamos lo que ve el jugador
         UpdateUI(); 
 
-        if (bazasJugadas >= 5) 
-    {
-        Debug.Log("--- 🏁 FIN DE LA MANO: RESULTADOS ---");
+        // --- 2. Comprobar Fin de RONDA ---
+        int limiteRonda = InteractionManager.Instance.currentRoundCards;
 
-    int apuestaP1 = BettingManager.Instance.p1Bet;
-    int apuestaP2 = BettingManager.Instance.p2Bet;
-
-    // --- JUGADOR 1 ---
-    if (p1Wins == apuestaP1) {
-        Debug.Log($"<color=green>P1 CUMPLE:</color> Mantiene sus vidas.");
-    } else {
-        InteractionManager.Instance.p1Vidas--; // 🔥 RESTA VIDA
-        Debug.Log($"<color=red>P1 FALLA:</color> Pierde un corazón.");
-    }
-
-    // --- JUGADOR 2 ---
-    if (p2Wins == apuestaP2) {
-        Debug.Log($"<color=green>P2 CUMPLE:</color> Mantiene sus vidas.");
-    } else {
-        InteractionManager.Instance.p2Vidas--; // 🔥 RESTA VIDA
-        Debug.Log($"<color=red>P2 FALLA:</color> Pierde un corazón.");
-    }
-
-    // 1. Actualizamos visualmente INMEDIATAMENTE para que se vea el corazón desaparecer
-    UpdateUI();
-
-    // 2. Comprobamos Game Over (Opcional por ahora)
-    if (InteractionManager.Instance.p1Vidas <= 0 || InteractionManager.Instance.p2Vidas <= 0)
-    {
-        Debug.Log("💀 GAME OVER PARA ALGUIEN 💀");
-        // Aquí llamarías a tu pantalla de fin de partida
-    }
-
-    // 3. Limpieza normal
-    StartCoroutine(CleanTableRoutine());
-    
-    // Reset contadores de la ronda
-    bazasJugadas = 0;
-    p1Wins = 0;
-    p2Wins = 0;
-    }
-    }
-
-    // Método dedicado exclusivamente a pintar los textos
-    private void UpdateUI()
-{
-    // Actualiza Puntos
-    scoreTextP1?.SetText($"P1: {p1Wins}");
-    scoreTextP2?.SetText($"P2: {p2Wins}");
-
-    // Actualiza Vidas (Usando el Singleton)
-    if (InteractionManager.Instance != null)
-    {
-        string p1Corazones = GetHeartsString(InteractionManager.Instance.p1Vidas);
-        string p2Corazones = GetHeartsString(InteractionManager.Instance.p2Vidas);
-
-        livesTextP1?.SetText(p1Corazones);
-        livesTextP2?.SetText(p2Corazones);
-        
-        // Opcional: Cambiar color si queda 1 vida (Feedback visual)
-        if (livesTextP1 != null) 
-            livesTextP1.color = (InteractionManager.Instance.p1Vidas == 1) ? Color.red : Color.white;
+        if (bazasJugadas >= limiteRonda) 
+        {
+            // === FIN DE LA MANO ===
+            Debug.Log($"--- 🏁 FIN DE LA RONDA DE {limiteRonda} CARTAS ---");
             
-        if (livesTextP2 != null) 
-            livesTextP2.color = (InteractionManager.Instance.p2Vidas == 1) ? Color.red : Color.white;
+            // Iniciamos la secuencia de resolución con espera para leer el mensaje anterior
+            StartCoroutine(WaitAndResolveRound());
+        }
+        else
+        {
+            // === SOLO FIN DE BAZA ===
+            StartCoroutine(CleanTableRoutine());
+        }
     }
-}
+
+    // --- Secuencia de Resolución de Ronda ---
+    IEnumerator WaitAndResolveRound()
+    {
+        // Esperamos 1.5s para que el jugador lea "JUGADOR X GANA LA BAZA"
+        yield return new WaitForSeconds(1.5f);
+        
+        ResolverApuestas(); // Esto actualiza el mensaje a "P1 PIERDE VIDA", etc.
+        
+        // Si NO es Game Over, procedemos a limpiar y preparar la siguiente ronda
+        if (InteractionManager.Instance.p1Vidas > 0 && InteractionManager.Instance.p2Vidas > 0)
+        {
+            StartCoroutine(ResetRoundAfterDelay());
+        }
+    }
+
+    private void ResolverApuestas()
+    {
+        int apuestaP1 = BettingManager.Instance.p1Bet;
+        int apuestaP2 = BettingManager.Instance.p2Bet;
+        
+        string mensajeResultado = "";
+
+        // JUGADOR 1
+        if (p1Wins == apuestaP1) {
+            mensajeResultado += "P1: CUMPLE. ";
+        } else {
+            InteractionManager.Instance.p1Vidas--;
+            mensajeResultado += "P1: PIERDE VIDA. ";
+        }
+
+        // JUGADOR 2
+        if (p2Wins == apuestaP2) {
+            mensajeResultado += "P2: CUMPLE.";
+        } else {
+            InteractionManager.Instance.p2Vidas--;
+            mensajeResultado += "P2: PIERDE VIDA.";
+        }
+
+        // Mostrar resultado final en el Panel InfoLine
+        InteractionManager.Instance.SetInfoMessage(mensajeResultado);
+        UpdateUI();
+
+        // Chequeo de Muerte
+        if (InteractionManager.Instance.p1Vidas <= 0 || InteractionManager.Instance.p2Vidas <= 0)
+        {
+            string ganador = "";
+            if (InteractionManager.Instance.p1Vidas > 0) ganador = "JUGADOR 1";
+            else if (InteractionManager.Instance.p2Vidas > 0) ganador = "JUGADOR 2";
+            else ganador = "NADIE";
+
+            InteractionManager.Instance.SetInfoMessage($"☠️ GAME OVER ☠️\nGANADOR: {ganador}");
+            
+            StartCoroutine(GameOverSequence());
+        }
+    }
+
+    // --- Corrutinas de Limpieza ---
+
+    IEnumerator ResetRoundAfterDelay()
+    {
+        yield return new WaitForSeconds(3.0f); // 3s para leer quién perdió vida
+        
+        ClearTableNow();
+        
+        bazasJugadas = 0;
+        p1Wins = 0;
+        p2Wins = 0;
+        UpdateUI();
+
+        // Preparamos la siguiente ronda (5 -> 4 -> 3...)
+        InteractionManager.Instance.AdvanceRoundSequence();
+        
+        InteractionManager.Instance.isPaused = false;
+        InteractionManager.Instance.SetInfoMessage($"Ronda terminada.\nSiguiente ronda: {InteractionManager.Instance.currentRoundCards} cartas.");
+    }
 
     IEnumerator CleanTableRoutine()
     {
         yield return new WaitForSeconds(1.5f);
         ClearTableNow();
-        // --- DESBLOQUEO ---
-        // 1. Quitamos la pausa
         InteractionManager.Instance.isPaused = false;
-        
-        // 2. Y AHORA cambiamos el turno para que juegue el siguiente
-        // (Esto reactivará los colores de las manos correctamente)
         InteractionManager.Instance.ChangeTurn();
+    }
+
+    IEnumerator GameOverSequence()
+    {
+        InteractionManager.Instance.isPaused = true;
+        
+        yield return new WaitForSeconds(4.0f); // Tiempo para celebrar
+
+        ClearTableNow();
+        bazasJugadas = 0;
+        p1Wins = 0;
+        p2Wins = 0;
+        UpdateUI();
+
+        // Reinicio Total
+        InteractionManager.Instance.ResetGameTotal();
+
+        InteractionManager.Instance.isPaused = false;
+        UpdateUI(); 
+
+        InteractionManager.Instance.SetInfoMessage("NUEVA PARTIDA.\nPulsa 'Get Hand' para empezar.");
+    }
+
+    // --- Helpers UI y Lógica ---
+
+    private void UpdateUI()
+    {
+        scoreTextP1?.SetText($"P1: {p1Wins}");
+        scoreTextP2?.SetText($"P2: {p2Wins}");
+
+        if (InteractionManager.Instance != null)
+        {
+            string p1Corazones = GetHeartsString(InteractionManager.Instance.p1Vidas);
+            string p2Corazones = GetHeartsString(InteractionManager.Instance.p2Vidas);
+
+            livesTextP1?.SetText(p1Corazones);
+            livesTextP2?.SetText(p2Corazones);
+            
+            if (livesTextP1 != null) 
+                livesTextP1.color = (InteractionManager.Instance.p1Vidas == 1) ? Color.red : Color.white;
+                
+            if (livesTextP2 != null) 
+                livesTextP2.color = (InteractionManager.Instance.p2Vidas == 1) ? Color.red : Color.white;
+        }
+    }
+
+    private string GetHeartsString(int lives)
+    {
+        if (lives <= 0) return "";
+        return new string('♥', lives); 
     }
 
     private int CalculateScore(Card card)

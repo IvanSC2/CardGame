@@ -5,7 +5,7 @@ using TMPro;
 public class BettingManager : MonoBehaviour
 {
     public static BettingManager Instance;
-
+    
     [Header("UI References")]
     public GameObject panelRoot;
     public TextMeshProUGUI titleText;
@@ -70,19 +70,21 @@ public GameObject tableObject; // Arrastra el CoTable aquí
         if (isP1Choosing)
         {
             p1Bet = amount;
+            // Mensaje informativo
+            InteractionManager.Instance.SetInfoMessage($"P1 APUESTA QUE GANARÁ {p1Bet} BAZAS");
+            
             isP1Choosing = false;
             SetupUIForP2();
         }
         else
         {
             p2Bet = amount;
-            panelRoot.SetActive(false);
-            Debug.Log($"Apuestas cerradas: P1:{p1Bet}, P2:{p2Bet}");
+            // Mensaje informativo
+            InteractionManager.Instance.SetInfoMessage($"P2 APUESTA QUE GANARÁ {p2Bet} BAZAS.\n¡A JUGAR!");
             
-
-            tableObject.SetActive(true); // ¡No olvides encenderla al terminar!
             panelRoot.SetActive(false);
-            // Iniciamos el juego real
+            tableObject.SetActive(true);
+            
             InteractionManager.Instance.InitializeGame();
         }
     }

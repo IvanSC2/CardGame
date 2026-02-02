@@ -24,34 +24,42 @@ public class HandTester : MonoBehaviour
         
     }
 // MÉTODO 1: Sacar 5 cartas (Modo Juego)
-    public void DrawNewHand()
-{
-    PrepararVista(esGrid: false);
+public void DrawNewHand()
+    {
+        PrepararVista(esGrid: false);
 
         if (TableZone.Instance != null)
         {
-            
             TableZone.Instance.ClearTableNow();
         }
-    
-    for (int i = 0; i < 5; i++)
-    {
-        Card data = CardDatabase.DrawTopCard(); 
 
-        // Si data es null, significa que el mazo se ha agotado
-        if (data == null) 
+        // --- CAMBIO CLAVE: Leemos la cantidad dinámica del Manager ---
+        int cardsToDeal = 5; // Valor por defecto de seguridad
+        if (InteractionManager.Instance != null) 
         {
-            Debug.Log("No se pueden sacar más cartas, mazo vacío.");
-            break; // Rompemos el bucle for para que no intente sacar las siguientes
+            cardsToDeal = InteractionManager.Instance.currentRoundCards;
+        }
+        // -------------------------------------------------------------
+
+        for (int i = 0; i < cardsToDeal; i++) // Usamos la variable, no '5'
+        {
+            Card data = CardDatabase.DrawTopCard();
+
+            if (data == null)
+            {
+                Debug.Log("Mazo vacío.");
+                break;
+            }
+
+            InstanciarCarta(data, handArea);
         }
 
-        InstanciarCarta(data, handArea);
+        // Llamamos a las apuestas con el número correcto
+        if (BettingManager.Instance != null)
+        {
+            BettingManager.Instance.StartBettingPhase(cardsToDeal);
+        }
     }
-    if (BettingManager.Instance != null)
-    {
-        BettingManager.Instance.StartBettingPhase(5); // 5 cartas esta ronda
-    }
-}
 
     // MÉTODO 2: Mostrar las 52 cartas (Modo Colección)
     public void ShowFullDeck()
