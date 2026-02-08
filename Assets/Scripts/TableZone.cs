@@ -105,12 +105,12 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         if (score1 > score2)
         {
             p1Wins++;
-            InteractionManager.Instance.SetInfoMessage("¡JUGADOR 1 GANA LA BAZA!");
+            InteractionManager.Instance.SetInfoMessage("¡JUGADOR 1 GANA LA BAZA!\n");
         }
         else if (score2 > score1)
         {
             p2Wins++;
-            InteractionManager.Instance.SetInfoMessage("¡JUGADOR 2 GANA LA BAZA!");
+            InteractionManager.Instance.SetInfoMessage("¡JUGADOR 2 GANA LA BAZA!\n");
         }
 
         UpdateUI(); 
@@ -157,18 +157,18 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
 
         // JUGADOR 1
         if (p1Wins == apuestaP1) {
-            mensajeResultado += "P1: CUMPLE. ";
+            mensajeResultado += "P1: CUMPLE.\n";
         } else {
             InteractionManager.Instance.p1Vidas--;
-            mensajeResultado += "P1: PIERDE VIDA. ";
+            mensajeResultado += "P1: PIERDE VIDA.\n";
         }
 
         // JUGADOR 2
         if (p2Wins == apuestaP2) {
-            mensajeResultado += "P2: CUMPLE.";
+            mensajeResultado += "P2: CUMPLE.\n";
         } else {
             InteractionManager.Instance.p2Vidas--;
-            mensajeResultado += "P2: PIERDE VIDA.";
+            mensajeResultado += "P2: PIERDE VIDA.\n";
         }
 
         // Mostrar resultado final en el Panel InfoLine

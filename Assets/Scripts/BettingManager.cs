@@ -71,7 +71,7 @@ public GameObject tableObject; // Arrastra el CoTable aquí
         {
             p1Bet = amount;
             // Mensaje informativo
-            InteractionManager.Instance.SetInfoMessage($"P1 APUESTA QUE GANARÁ {p1Bet} BAZAS");
+            InteractionManager.Instance.SetInfoMessage($"P1 APUESTA QUE GANARA {p1Bet} BAZAS");
             
             isP1Choosing = false;
             SetupUIForP2();
@@ -80,7 +80,7 @@ public GameObject tableObject; // Arrastra el CoTable aquí
         {
             p2Bet = amount;
             // Mensaje informativo
-            InteractionManager.Instance.SetInfoMessage($"P2 APUESTA QUE GANARÁ {p2Bet} BAZAS.\n¡A JUGAR!");
+            InteractionManager.Instance.SetInfoMessage($"P2 APUESTA QUE GANARA {p2Bet} BAZAS.\n¡A JUGAR!");
             
             panelRoot.SetActive(false);
             tableObject.SetActive(true);
