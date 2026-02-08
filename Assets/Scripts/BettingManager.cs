@@ -1,6 +1,8 @@
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using System.Collections;
+using System.Collections.Generic;
 
 public class BettingManager : MonoBehaviour
 {
@@ -9,9 +11,11 @@ public class BettingManager : MonoBehaviour
     [Header("UI References")]
     public GameObject panelRoot;
     public TextMeshProUGUI titleText;
-    public Button[] betButtons; // Arrastra los 6 botones aquí (índice 0 = apuesta 0)
+    public Button[] betButtons; 
+    
     [Header("Referencias de Escena")]
-public GameObject tableObject; // Arrastra el CoTable aquí
+    public GameObject tableObject; 
+
     [Header("Game State")]
     public int cardsInRound = 5;
     public int p1Bet;
@@ -24,7 +28,6 @@ public GameObject tableObject; // Arrastra el CoTable aquí
         Instance = this;
         panelRoot.SetActive(false);
 
-        // Configurar clicks de botones
         for (int i = 0; i < betButtons.Length; i++)
         {
             int val = i; 
@@ -34,9 +37,8 @@ public GameObject tableObject; // Arrastra el CoTable aquí
 
     public void StartBettingPhase(int numCards)
     {
-
         cardsInRound = numCards;
-        isP1Choosing = true;
+        isP1Choosing = true; // Siempre empieza P1 por ahora (puedes rotarlo luego)
         tableObject.SetActive(false);
         panelRoot.SetActive(true);
         SetupUIForP1();
@@ -44,48 +46,65 @@ public GameObject tableObject; // Arrastra el CoTable aquí
 
     private void SetupUIForP1()
     {
-        titleText.text = "JUGADOR 1: ¿Cuántas vas a ganar?";
-        // P1 siempre puede elegir todo (0 a cardsInRound)
+        titleText.text = "TU TURNO: ¿Cuántas bazas ganarás?";
+        EnableButtons(true);
+        
+        // Regla: Si P1 es último, aplicar prohibida (Aquí asumimos P1 primero por simpleza)
         for (int i = 0; i < betButtons.Length; i++)
-        {
             betButtons[i].interactable = (i <= cardsInRound);
-        }
     }
 
-    private void SetupUIForP2()
-    {
-        titleText.text = "JUGADOR 2: ¿Cuántas vas a ganar?";
-        int forbiddenBet = cardsInRound - p1Bet;
-
-        for (int i = 0; i < betButtons.Length; i++)
-        {
-            // Regla de Oro: Suma no puede ser igual a total cartas
-            bool isAllowed = (i <= cardsInRound) && (i != forbiddenBet);
-            betButtons[i].interactable = isAllowed;
-        }
-    }
-
+    // --- EL BOTÓN CLICADO POR TI ---
     private void OnBetClicked(int amount)
     {
         if (isP1Choosing)
         {
             p1Bet = amount;
-            // Mensaje informativo
-            InteractionManager.Instance.SetInfoMessage($"P1 APUESTA QUE GANARA {p1Bet} BAZAS");
+            InteractionManager.Instance.SetInfoMessage($"P1 APUESTA: {p1Bet}");
             
             isP1Choosing = false;
-            SetupUIForP2();
+            
+            // EN LUGAR DE MOSTRAR BOTONES PARA P2, LANZAMOS LA IA
+            DisableButtons(); // Que no toques nada
+            StartCoroutine(AIBettingRoutine());
         }
-        else
+    }
+
+    // --- PENSAMIENTO DE LA IA ---
+    IEnumerator AIBettingRoutine()
+    {
+        titleText.text = "JUGADOR 2 (IA) ESTÁ PENSANDO...";
+        yield return new WaitForSeconds(1.5f); // Pausa dramática
+
+        // 1. Recopilar datos para el cerebro
+        var p2Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP2);
+        
+        // 2. Preguntar al cerebro
+        // (Assume P2 is Last because P1 was first)
+        p2Bet = AIController.Instance.CalculateAIBet(p2Hand, p1Bet, cardsInRound, true);
+
+        InteractionManager.Instance.SetInfoMessage($"P2 (IA) DICE QUE GANARÁ: {p2Bet}");
+        
+        // 3. Empezar juego
+        yield return new WaitForSeconds(1.0f);
+        panelRoot.SetActive(false);
+        tableObject.SetActive(true);
+        InteractionManager.Instance.InitializeGame();
+    }
+
+    // Helpers
+    private void EnableButtons(bool enable) { foreach(var b in betButtons) b.gameObject.SetActive(enable); }
+    private void DisableButtons() { foreach(var b in betButtons) b.gameObject.SetActive(false); }
+
+    // Método auxiliar para convertir UICards visuales a Datos Card
+    private List<Card> GetCardsFromGroup(CanvasGroup group)
+    {
+        List<Card> list = new List<Card>();
+        foreach(Transform t in group.transform)
         {
-            p2Bet = amount;
-            // Mensaje informativo
-            InteractionManager.Instance.SetInfoMessage($"P2 APUESTA QUE GANARA {p2Bet} BAZAS.\n¡A JUGAR!");
-            
-            panelRoot.SetActive(false);
-            tableObject.SetActive(true);
-            
-            InteractionManager.Instance.InitializeGame();
+            UICard ui = t.GetComponent<UICard>();
+            if(ui != null) list.Add(ui.cardData);
         }
+        return list;
     }
 }

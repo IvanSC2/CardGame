@@ -1,140 +1,199 @@
 using UnityEngine;
 using TMPro;
+using System.Collections;
+using System.Collections.Generic;
 
-public enum GameState {P1_TURN,P2_TURN,WAITING}
-
-
+public enum GameState {P1_TURN, P2_TURN, WAITING}
 
 public class InteractionManager : MonoBehaviour
 {
-
-    //Singleton
+    // Singleton
     public static InteractionManager Instance;
-    //Carta que tenemos en la mano
+
     [Header("UI Feedback")]
-    public TextMeshProUGUI infoLineText; //
+    public TextMeshProUGUI infoLineText;
+
     [Header("Control de Rondas")]
-    public int currentRoundCards=5;
-    private int roundDelta= -1;
+    public int currentRoundCards = 5;
+    private int roundDelta = -1;
+
     [Header("Estadísticas de Jugador")]
-    public int p1Vidas = 3; // Empezamos con 3 corazones
+    public int p1Vidas = 3;
     public int p2Vidas = 3;
+
     [Header("Referencias de Turno")]
-    public CanvasGroup handGroupP1; // Arrastra el CanvasGroup del HandArea P1
-    public CanvasGroup handGroupP2; // Arrastra el CanvasGroup del HandArea P2
+    public CanvasGroup handGroupP1; 
+    public CanvasGroup handGroupP2; 
     
     public GameState currentState;
-    
     public UICard SelectedCard { get; private set; }
-
     public bool isPaused = false;
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
 
+    // --- Helpers de Mensajes ---
     public void SetInfoMessage(string message)
     {
         if (infoLineText != null)
         {
             infoLineText.text = message;
         }
-        // Seguimos mostrando el log en consola por si acaso
         Debug.Log("[INFO-UI]: " + message);
     }
+
     private void Awake()
     {
         if (Instance != null && Instance != this) Destroy(this.gameObject);
         else Instance = this;
         
-        // Empezamos en WAITING hasta que se repartan cartas
         currentState = GameState.WAITING;
         UpdateVisualStates();
     }
 
     public void InitializeGame()
     {
-        isPaused= false;
+        isPaused = false;
         currentState = GameState.P1_TURN;
         UpdateVisualStates();
     }
-    // Método llamado por la carta al ser clicada
-    public void SelectCard(UICard card)
-{
-    // 1. Verificación de pertenencia y turno
-    bool isP1Card = card.transform.parent == handGroupP1.transform;
-    bool isP2Card = card.transform.parent == handGroupP2.transform;
 
-    bool canSelect = (currentState == GameState.P1_TURN && isP1Card) || 
-                    (currentState == GameState.P2_TURN && isP2Card);
+    // =================================================================================
+    // 🧠 LÓGICA DE TURNOS E IA
+    // =================================================================================
 
-    if (canSelect)
-    {
-        // CASO 1: Pulsas la misma carta que ya tenías (Deseleccionar)
-        if (SelectedCard == card)
-        {
-            ClearSelection();
-            Debug.Log("Misma carta pulsada: Deseleccionando.");
-            return; 
-        }
-
-        // CASO 2: Tenías otra carta antes (Limpiar color de la anterior)
-        if (SelectedCard != null)
-        {
-            SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
-        }
-
-        // CASO 3: Nueva selección
-        SelectedCard = card;
-        SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.yellow;
-        Debug.Log("Nueva carta seleccionada: " + card.name);
-    }
-    else
-    {
-        Debug.Log("No es tu turno o no es tu carta.");
-    }
-}
- public void ResetGameTotal()
-    {
-        Debug.Log("🔄 REINICIANDO SISTEMA DE JUEGO...");
-
-        // 1. Resetear Vidas
-        p1Vidas = 3;
-        p2Vidas = 3;
-
-        // 2. Resetear Secuencia de Rondas (Volver al inicio del Zig-Zag)
-        currentRoundCards = 5;
-        roundDelta = -1; // Para que la siguiente sea 4
-
-        // 3. Resetear Baraja (Importante: Borrar la vieja y crear nueva de 52)
-        CardDatabase.GenerateDeck(); 
-        
-        // 4. Limpiar selección si hubiera
-        ClearSelection();
-
-        Debug.Log("✅ JUEGO NUEVO LISTO: Vidas llenas, Baraja de 52, Ronda de 5.");
-    }
     public void ChangeTurn()
     {
+        // Alternar Turno
         if (currentState == GameState.P1_TURN) currentState = GameState.P2_TURN;
         else if (currentState == GameState.P2_TURN) currentState = GameState.P1_TURN;
         
         UpdateVisualStates();
         ClearSelection();
+
+        // >>> DISPARADOR DE LA IA <<<
+        if (currentState == GameState.P2_TURN)
+        {
+            StartCoroutine(AITurnRoutine());
+        }
     }
 
-    // El efecto "Gris" y bloqueo
-   public void UpdateVisualStates()
+    // Corrutina que controla el pensamiento y acción de la IA
+    IEnumerator AITurnRoutine()
     {
-        // --- NUEVA LÓGICA DE BLOQUEO VISUAL ---
-        if (isPaused)
+        Debug.Log("🤖 IA: Pensando jugada...");
+        yield return new WaitForSeconds(1.5f); // Pequeña pausa para dar realismo
+
+        // 1. Obtener la carta que hay en la mesa (si la hay)
+        Card cardOnTable = null;
+        if (TableZone.Instance != null && TableZone.Instance.transform.childCount > 0)
         {
-            // Si está pausado, BLOQUEAMOS A LOS DOS
-            SetGroupState(handGroupP1, false, 0.5f);
-            SetGroupState(handGroupP2, false, 0.5f);
-            return;
+            // Asumimos que el primer hijo de la mesa es la carta del rival
+            cardOnTable = TableZone.Instance.transform.GetChild(0).GetComponent<UICard>().cardData;
         }
 
-        // Comportamiento normal de turnos
-        SetGroupState(handGroupP1, currentState == GameState.P1_TURN, currentState == GameState.P1_TURN ? 1f : 0.5f);
-        SetGroupState(handGroupP2, currentState == GameState.P2_TURN, currentState == GameState.P2_TURN ? 1f : 0.5f);
+        // 2. Obtener la mano de la IA (Lista de componentes UICard)
+        List<UICard> aiHand = new List<UICard>();
+        foreach (Transform t in handGroupP2.transform)
+        {
+            UICard c = t.GetComponent<UICard>();
+            if (c != null) aiHand.Add(c);
+        }
+
+        // 3. Consultar al Cerebro (AIController)
+        int currentWins = TableZone.Instance.p2Wins;
+        int targetBet = BettingManager.Instance.p2Bet;
+
+        UICard cardToPlay = AIController.Instance.ChooseCardToPlay(aiHand, cardOnTable, currentWins, targetBet);
+
+        // 4. Ejecutar la jugada simulando clicks
+        if (cardToPlay != null)
+        {
+            Debug.Log($"🤖 IA: Juega {cardToPlay.cardData.rank} de {cardToPlay.cardData.suit}");
+            
+            // A) Seleccionar la carta
+            SelectCard(cardToPlay); 
+            
+            yield return new WaitForSeconds(0.5f); // Breve pausa visual
+
+            // B) Jugarla en la mesa
+            TableZone.Instance.OnPointerClick(null);
+        }
+        else
+        {
+            Debug.LogError("IA Error: No se encontró carta válida para jugar.");
+        }
+    }
+
+    // =================================================================================
+    // 🃏 LÓGICA DE SELECCIÓN DE CARTAS
+    // =================================================================================
+
+    public void SelectCard(UICard card)
+    {
+        // 1. Verificación de pertenencia y turno
+        bool isP1Card = card.transform.parent == handGroupP1.transform;
+        bool isP2Card = card.transform.parent == handGroupP2.transform;
+
+        bool canSelect = (currentState == GameState.P1_TURN && isP1Card) || 
+                        (currentState == GameState.P2_TURN && isP2Card); // Permitimos P2 para que la IA pueda seleccionarse a sí misma
+
+        if (canSelect)
+        {
+            // CASO 1: Deseleccionar (Toggle)
+            if (SelectedCard == card)
+            {
+                ClearSelection();
+                return; 
+            }
+
+            // CASO 2: Limpiar anterior
+            if (SelectedCard != null)
+            {
+                SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
+            }
+
+            // CASO 3: Nueva selección
+            SelectedCard = card;
+            SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.yellow;
+        }
+        else
+        {
+            // Solo mostramos log si es un humano intentando hacer trampa
+            if(currentState == GameState.P1_TURN && isP2Card) 
+                Debug.Log("No es tu turno o no es tu carta.");
+        }
+    }
+
+    public void ClearSelection()
+    {
+        if (SelectedCard != null)
+        {
+            SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
+        }
+        SelectedCard = null;
+    }
+
+    public bool HasCardSelected()
+    {
+        return SelectedCard != null;
+    }
+
+    // =================================================================================
+    // ⚙️ GESTIÓN DE ESTADO (GAME LOOP)
+    // =================================================================================
+
+    public void ResetGameTotal()
+    {
+        Debug.Log("🔄 REINICIANDO SISTEMA DE JUEGO...");
+
+        p1Vidas = 3;
+        p2Vidas = 3;
+
+        currentRoundCards = 5;
+        roundDelta = -1;
+
+        CardDatabase.GenerateDeck(); 
+        ClearSelection();
+
+        Debug.Log("✅ JUEGO NUEVO LISTO.");
     }
 
     public void AdvanceRoundSequence()
@@ -143,60 +202,47 @@ public class InteractionManager : MonoBehaviour
 
         if(currentRoundCards <= 2)
         {
-            currentRoundCards =2;
-            roundDelta=1;
+            currentRoundCards = 2;
+            roundDelta = 1;
         }
         else if(currentRoundCards >= 5)
         {
-            currentRoundCards =5;
-            roundDelta =-1;
+            currentRoundCards = 5;
+            roundDelta = -1;
         }
         Debug.Log($"<color=orange>PRÓXIMA RONDA: {currentRoundCards} CARTAS</color>");
-
-
     }
-    // Helper para no repetir código
-    // Helper para no repetir código
+
+    public void UpdateVisualStates()
+    {
+        if (isPaused)
+        {
+            SetGroupState(handGroupP1, false, 0.5f);
+            SetGroupState(handGroupP2, false, 0.5f);
+            return;
+        }
+
+        SetGroupState(handGroupP1, currentState == GameState.P1_TURN, currentState == GameState.P1_TURN ? 1f : 0.5f);
+        SetGroupState(handGroupP2, currentState == GameState.P2_TURN, currentState == GameState.P2_TURN ? 1f : 0.5f);
+    }
+
     private void SetGroupState(CanvasGroup group, bool active, float alpha)
     {
         if (group != null)
         {
-            // 1. Bloqueo de interacción GLOBAL (nadie puede tocar nada en este grupo)
             group.interactable = active;
             group.blocksRaycasts = active;
             
-            // 2. FONDO: Lo mantenemos SIEMPRE visible (Opaco) para que no se vea transparente el tablero
+            // Fondo opaco siempre
             group.alpha = 1f; 
 
-            // 3. CARTAS: Iteramos por cada carta hija para ponerlas "grises" (semitransparentes)
+            // Cartas semitransparentes si no es su turno
             foreach (Transform childCard in group.transform)
             {
-                // Buscamos o añadimos un CanvasGroup a la carta individual
                 CanvasGroup cardGroup = childCard.GetComponent<CanvasGroup>();
                 if (cardGroup == null) cardGroup = childCard.gameObject.AddComponent<CanvasGroup>();
-
-                // Si es activo -> Se ve normal (1f)
-                // Si NO es activo -> Se pone gris/transparente (0.5f o el valor que pasaste)
                 cardGroup.alpha = active ? 1f : alpha; 
             }
         }
-    }
-    // Método llamado por la mesa al recibir la carta
-    public void ClearSelection()
-    {
-        // Siempre que limpiamos la selección, aseguramos que el color vuelva a blanco
-    if (SelectedCard != null)
-    {
-        SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
-    }
-    
-    SelectedCard = null;
-    Debug.Log("Selección reseteada.");
-    }
-
-    // Utilidad para saber si hay algo seleccionado
-    public bool HasCardSelected()
-    {
-        return SelectedCard != null;
     }
 }
