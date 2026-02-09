@@ -12,7 +12,8 @@ public class InteractionManager : MonoBehaviour
 
     [Header("UI Feedback")]
     public TextMeshProUGUI infoLineText;
-
+    [Header("Debug")]
+    public bool isDebugAIVisible = false; // VARIABLE DE TOGGLE
     [Header("Control de Rondas")]
     public int currentRoundCards = 5;
     private int roundDelta = -1;
@@ -53,6 +54,41 @@ public class InteractionManager : MonoBehaviour
         isPaused = false;
         currentState = GameState.P1_TURN;
         UpdateVisualStates();
+        RefreshHandVisibility();
+    }
+
+    // --- LÓGICA DE TOGGLE ---
+    public void ToggleAIDebugView()
+    {
+        isDebugAIVisible = !isDebugAIVisible;
+        RefreshHandVisibility();
+    }
+
+    public void RefreshHandVisibility()
+    {
+        // CASO ESPECIAL: RONDA DE 1 CARTA (CIEGA)
+        if (currentRoundCards == 1)
+        {
+            // P1 (Tú): NO ves tu carta (Boca abajo)
+            foreach (Transform t in handGroupP1.transform)
+                if (t.GetComponent<UICard>()) t.GetComponent<UICard>().SetFaceUp(false);
+
+            // P2 (IA): SÍ ves su carta (Boca arriba) para tener info
+            foreach (Transform t in handGroupP2.transform)
+                if (t.GetComponent<UICard>()) t.GetComponent<UICard>().SetFaceUp(true);
+                
+            return; // Salimos aquí, ignorando el resto
+        }
+
+        // --- LÓGICA NORMAL (Rondas 5, 4, 3, 2) ---
+        foreach (Transform t in handGroupP1.transform) 
+            if(t.GetComponent<UICard>()) t.GetComponent<UICard>().SetFaceUp(true);
+
+        foreach (Transform t in handGroupP2.transform) 
+        {
+            UICard card = t.GetComponent<UICard>();
+            if (card != null) card.SetFaceUp(isDebugAIVisible);
+        }
     }
 
     // =================================================================================
@@ -107,7 +143,7 @@ public class InteractionManager : MonoBehaviour
         if (cardToPlay != null)
         {
             Debug.Log($"🤖 IA: Juega {cardToPlay.cardData.rank} de {cardToPlay.cardData.suit}");
-            
+            cardToPlay.SetFaceUp(true);
             // A) Seleccionar la carta
             SelectCard(cardToPlay); 
             
@@ -121,7 +157,13 @@ public class InteractionManager : MonoBehaviour
             Debug.LogError("IA Error: No se encontró carta válida para jugar.");
         }
     }
-
+    private int GetSuitValue(string suit)
+    {
+        if (suit == "Diamantes") return 4;
+        if (suit == "Corazones") return 3;
+        if (suit == "Picas") return 2;
+        return 1;
+    }
     // =================================================================================
     // 🃏 LÓGICA DE SELECCIÓN DE CARTAS
     // =================================================================================
@@ -200,19 +242,81 @@ public class InteractionManager : MonoBehaviour
     {
         currentRoundCards += roundDelta;
 
-        if(currentRoundCards <= 2)
+        // CAMBIO: Ahora el límite inferior es 1, no 2
+        if(currentRoundCards <= 1)
         {
-            currentRoundCards = 2;
-            roundDelta = 1;
+            currentRoundCards = 1;
+            roundDelta = 1; // La próxima subirá a 2
         }
         else if(currentRoundCards >= 5)
         {
             currentRoundCards = 5;
             roundDelta = -1;
         }
-        Debug.Log($"<color=orange>PRÓXIMA RONDA: {currentRoundCards} CARTAS</color>");
+        
+        string tipoRonda = (currentRoundCards == 1) ? "RONDA CIEGA (INDIAN POKER)" : "NORMAL";
+        Debug.Log($"<color=orange>PRÓXIMA RONDA: {currentRoundCards} CARTAS - {tipoRonda}</color>");
+    }
+    // 3. NUEVO: RESOLUCIÓN EXPRESS (Sin jugar cartas)
+    public void ResolveBlindRoundImmediate()
+    {
+        StartCoroutine(BlindRoundRoutine());
     }
 
+    IEnumerator BlindRoundRoutine()
+    {
+        yield return new WaitForSeconds(1.0f);
+        SetInfoMessage("¡RESOLVIENDO RONDA CIEGA!");
+        
+        // 1. Revelamos TU carta (P1) para ver quién gana
+        foreach (Transform t in handGroupP1.transform)
+            if (t.GetComponent<UICard>()) t.GetComponent<UICard>().SetFaceUp(true);
+
+        yield return new WaitForSeconds(1.5f); // Suspense...
+
+        // 2. Comparamos valores directamente desde la mano
+        // (Asumimos que solo hay 1 carta por mano)
+        UICard p1Card = handGroupP1.transform.GetChild(0).GetComponent<UICard>();
+        UICard p2Card = handGroupP2.transform.GetChild(0).GetComponent<UICard>();
+
+        // Usamos la lógica de TableZone para calcular puntos (aunque no estén en la mesa)
+        // Ojo: Necesitamos acceder a la lógica de "quién gana".
+        // Para simplificar, lo calculamos aquí rápido:
+        int score1 = (p1Card.cardData.value * 10) + GetSuitValue(p1Card.cardData.suit);
+        int score2 = (p2Card.cardData.value * 10) + GetSuitValue(p2Card.cardData.suit);
+
+        // 3. Asignar victorias
+        if (score1 > score2) 
+        {
+            TableZone.Instance.p1Wins = 1;
+            SetInfoMessage("¡P1 TIENE LA CARTA MAS ALTA!");
+        }
+        else 
+        {
+            TableZone.Instance.p2Wins = 1;
+            SetInfoMessage("¡P2 TIENE LA CARTA MAS ALTA!");
+        }
+
+        TableZone.Instance.bazasJugadas = 1; // Forzamos que la ronda "acabó"
+        
+        yield return new WaitForSeconds(1.5f);
+
+        // 4. Llamar a la limpieza final de TableZone
+        // (Usamos un truco: llamamos a CheckWinner para que él active el fin de ronda)
+        // Pero como CheckWinner espera cartas EN LA MESA, mejor llamamos directamente a ResolverApuestas
+        // Sin embargo, TableZone.ResolveApuestas es privado. 
+        // TRUCO: Vamos a mover las cartas a la mesa visualmente y llamar a CheckWinner.
+        
+        p1Card.transform.SetParent(TableZone.Instance.transform);
+        p2Card.transform.SetParent(TableZone.Instance.transform);
+        
+        // Al ponerlas en la mesa, TableZone detectará 2 hijos... pero necesitamos disparar la lógica.
+        // Llamamos manualmente a CheckWinner modificando TableZone o simplemente dejando que TableZone
+        // maneje el final si lo hacemos público. 
+        
+        // OPCIÓN MÁS LIMPIA: Llamamos a una función pública en TableZone que creemos ahora.
+        TableZone.Instance.ForceEndRoundAnalysis();
+    }
     public void UpdateVisualStates()
     {
         if (isPaused)

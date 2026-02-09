@@ -8,6 +8,7 @@ public class AIController : MonoBehaviour
 
     private void Awake()
     {
+        
         Instance = this;
     }
 
@@ -174,7 +175,42 @@ public class AIController : MonoBehaviour
         // Si no tengo, puedo tirar cualquiera (pero no ganaré la baza, salvo triunfo)
         return hand;
     }
+    public int CalculateBlindBet(Card playerVisibleCard, int opponentBet, bool amILast)
+    {
+        // 1. ANÁLISIS VISUAL (Lo que la IA ve en tu frente)
+        // Probabilidad base: Si tú tienes carta alta, yo pierdo. Si tienes baja, yo gano.
+        float probabilityOfWinning = 0.5f; 
 
+        if (playerVisibleCard != null)
+        {
+            // Asumimos K=13, A=1. Cuanto más alta tu carta, menos chance tengo yo.
+            probabilityOfWinning = 1.0f - (playerVisibleCard.value / 14.0f);
+        }
+
+        // 2. PSICOLOGÍA (Leer la mente del jugador)
+        // Solo aplica si la IA responde a tu apuesta (amILast = true)
+        if (amILast)
+        {
+            if (opponentBet == 1) 
+            {
+                // JUGADOR DICE QUE GANA -> La IA asume que ella tiene una carta MALA (baja).
+                // "Si él se atreve, es porque yo soy débil".
+                probabilityOfWinning -= 0.25f; 
+                Debug.Log("IA (Pensamiento): Apuestas ganar... ¿Tan mala es mi carta?");
+            }
+            else 
+            {
+                // JUGADOR DICE QUE PIERDE -> La IA asume que ella tiene una carta BUENA (alta).
+                // "Si él se retira, es porque yo soy fuerte".
+                probabilityOfWinning += 0.25f;
+                Debug.Log("IA (Pensamiento): Te achicas... Debo tener un buen naipe.");
+            }
+        }
+
+        // 3. DECISIÓN FINAL
+        // Si tras ver tu carta y tu actitud, me veo con >50% opciones, voy.
+        return probabilityOfWinning > 0.5f ? 1 : 0;
+    }
     private bool CanBeat(Card myCard, Card enemyCard)
     {
         // 1. Si no son del mismo palo, automáticamente PIERDO 

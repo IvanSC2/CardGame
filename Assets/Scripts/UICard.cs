@@ -22,8 +22,18 @@ public class UICard : MonoBehaviour , IPointerClickHandler
     [Header("Artwork")]
     public GameObject artworkFace;
 
-
+    [Header("Configuración Reverso")]
+    public Sprite cardBackSprite; 
+    private Sprite cardFrontSprite;
+    private Image myBackground;
+    private bool isFaceUp = true;
     
+    private void Awake()
+    {
+        myBackground = GetComponent<Image>();
+        // Guardamos el sprite blanco original como "Frente"
+        if (myBackground != null) cardFrontSprite = myBackground.sprite;
+    }
     public void SetCard(Card card)
     {
         //Guardo la carta
@@ -81,7 +91,32 @@ public class UICard : MonoBehaviour , IPointerClickHandler
         }
 
     }
+    // --- NUEVO: Control de Cara/Cruz ---
+    public void SetFaceUp(bool isUp)
+    {
+        isFaceUp = isUp;
+        UpdateVisibility();
+    }
 
+    private void UpdateVisibility()
+    {
+        if (myBackground == null) return;
+
+        // 1. Cambiar Fondo
+        myBackground.sprite = isFaceUp ? cardFrontSprite : cardBackSprite;
+
+        // 2. Ocultar/Mostrar contenido
+        rankTop.gameObject.SetActive(isFaceUp);
+        rankBottom.gameObject.SetActive(isFaceUp);
+        suitTop.gameObject.SetActive(isFaceUp);
+        suitBottom.gameObject.SetActive(isFaceUp);
+        
+        if (pipsContainer != null) 
+            pipsContainer.SetActive(isFaceUp && cardData.value < 11 && cardData.value != 1);
+        
+        if (artworkFace != null) 
+            artworkFace.SetActive(isFaceUp && (cardData.value >= 11 || cardData.value == 1));
+    }
     private void ApplySuitColor(string suit)
     {
         bool isRed = suit == "Corazones" || suit == "Diamantes";

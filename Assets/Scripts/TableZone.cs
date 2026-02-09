@@ -91,6 +91,20 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         }
     }
 
+    // Método para la Ronda Ciega
+    public void ForceEndRoundAnalysis()
+    {
+        // Actualizamos textos visuales
+        UpdateUI(); 
+        
+        Debug.Log("--- FIN DE RONDA CIEGA ---");
+        
+        // Llamamos a la lógica de apuestas existente
+        // (Como es privada, o la haces pública, o copias la lógica aquí. 
+        //  RECOMENDACIÓN: Haz pública 'ResolverApuestas' o copia esto:)
+        
+        StartCoroutine(WaitAndResolveRound());
+    }
     private void CheckWinner()
     {
         UICard card1 = this.transform.GetChild(0).GetComponent<UICard>();
@@ -183,7 +197,7 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
             else if (InteractionManager.Instance.p2Vidas > 0) ganador = "JUGADOR 2";
             else ganador = "NADIE";
 
-            InteractionManager.Instance.SetInfoMessage($"☠️ GAME OVER ☠️\nGANADOR: {ganador}");
+            InteractionManager.Instance.SetInfoMessage($"GAME OVER \nGANADOR: {ganador}");
             
             StartCoroutine(GameOverSequence());
         }

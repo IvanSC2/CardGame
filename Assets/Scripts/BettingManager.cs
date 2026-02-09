@@ -41,7 +41,11 @@ public class BettingManager : MonoBehaviour
         isP1Choosing = true; // Siempre empieza P1 por ahora (puedes rotarlo luego)
         tableObject.SetActive(false);
         panelRoot.SetActive(true);
+        if(InteractionManager.Instance != null) 
+        InteractionManager.Instance.RefreshHandVisibility();
+    // ------------------------------
         SetupUIForP1();
+        if(InteractionManager.Instance) InteractionManager.Instance.RefreshHandVisibility();
     }
 
     private void SetupUIForP1()
@@ -73,23 +77,43 @@ public class BettingManager : MonoBehaviour
     // --- PENSAMIENTO DE LA IA ---
     IEnumerator AIBettingRoutine()
     {
-        titleText.text = "JUGADOR 2 (IA) ESTÁ PENSANDO...";
-        yield return new WaitForSeconds(1.5f); // Pausa dramática
+        titleText.text = "IA ESTÁ PENSANDO...";
+        yield return new WaitForSeconds(1.5f); 
 
-        // 1. Recopilar datos para el cerebro
-        var p2Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP2);
-        
-        // 2. Preguntar al cerebro
-        // (Assume P2 is Last because P1 was first)
-        p2Bet = AIController.Instance.CalculateAIBet(p2Hand, p1Bet, cardsInRound, true);
+        // --- LÓGICA NUEVA ---
+        if (cardsInRound == 1)
+        {
+            // RONDA CIEGA: La IA mira TU carta (P1)
+            var p1Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP1);
+            Card p1VisibleCard = (p1Hand.Count > 0) ? p1Hand[0] : null;
 
-        InteractionManager.Instance.SetInfoMessage($"P2 (IA) DICE QUE GANARÁ: {p2Bet}");
+            p2Bet = AIController.Instance.CalculateBlindBet(p1VisibleCard, p1Bet, true);
+        }
+        else
+        {
+            // RONDA NORMAL: La IA mira SU carta (P2)
+            var p2Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP2);
+            p2Bet = AIController.Instance.CalculateAIBet(p2Hand, p1Bet, cardsInRound, true);
+        }
+        // --------------------
+
+        InteractionManager.Instance.SetInfoMessage($"IA APUESTA: {p2Bet}");
         
-        // 3. Empezar juego
         yield return new WaitForSeconds(1.0f);
         panelRoot.SetActive(false);
         tableObject.SetActive(true);
-        InteractionManager.Instance.InitializeGame();
+
+        // --- BIFURCACIÓN FINAL ---
+        if (cardsInRound == 1)
+        {
+            // Si es ronda de 1, NO jugamos cartas. Vamos directo a resolver.
+            InteractionManager.Instance.ResolveBlindRoundImmediate();
+        }
+        else
+        {
+            // Si es ronda normal, empezamos el juego
+            InteractionManager.Instance.InitializeGame();
+        }
     }
 
     // Helpers
