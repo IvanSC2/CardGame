@@ -20,6 +20,9 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
     public int p2Wins = 0;
     public int bazasJugadas = 0;
 
+    private UICard currentCardP1;
+    private UICard currentCardP2;
+
     private void Awake()
     {
         Instance = this;
@@ -38,6 +41,9 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
     public void ClearTableNow()
     {
         foreach (Transform child in this.transform) Destroy(child.gameObject);
+
+        currentCardP1= null;
+        currentCardP2= null;
     }
 
     public void OnPointerClick(PointerEventData eventData)
@@ -45,6 +51,9 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         if (InteractionManager.Instance.HasCardSelected())
         {
             UICard cardToMove = InteractionManager.Instance.SelectedCard;
+            // Identificamos al dueño ANTES de cambiarle el Parent ---
+            bool isP1 = cardToMove.transform.parent == InteractionManager.Instance.handGroupP1.transform;
+            bool isP2 = cardToMove.transform.parent == InteractionManager.Instance.handGroupP2.transform;
 
             // --- Lógica Visual y Movimiento ---
             CardResizer resizer = cardToMove.GetComponent<CardResizer>();
@@ -59,6 +68,9 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
             cardToMove.transform.SetParent(this.transform);
             cardToMove.transform.localPosition = Vector3.zero;
             cardToMove.transform.localScale = Vector3.one;
+
+            if (isP1) currentCardP1 = cardToMove;
+            if (isP2) currentCardP2 = cardToMove;
             
             if (resizer != null) resizer.targetVisuals.localScale = finalScale;
             cardToMove.GetComponent<UnityEngine.UI.Image>().color = Color.white;
@@ -107,24 +119,30 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
     }
     private void CheckWinner()
     {
-        UICard card1 = this.transform.GetChild(0).GetComponent<UICard>();
-        UICard card2 = this.transform.GetChild(1).GetComponent<UICard>();
+        // Seguridad por si algo falla
+        if (currentCardP1 == null || currentCardP2 == null) 
+        {
+            Debug.LogError("Error en Mesa: Falta la carta de uno de los jugadores.");
+            return;
+        }
 
-        int score1 = CalculateScore(card1.cardData);
-        int score2 = CalculateScore(card2.cardData);
+        int score1 = CalculateScore(currentCardP1.cardData);
+        int score2 = CalculateScore(currentCardP2.cardData);
         
         bazasJugadas++; 
-
+        GameState winnerTurn = GameState.WAITING;
         // --- 1. Determinar Ganador de BAZA ---
         if (score1 > score2)
         {
             p1Wins++;
             InteractionManager.Instance.SetInfoMessage("¡JUGADOR 1 GANA LA BAZA!\n");
+            winnerTurn = GameState.P1_TURN;
         }
         else if (score2 > score1)
         {
             p2Wins++;
             InteractionManager.Instance.SetInfoMessage("¡JUGADOR 2 GANA LA BAZA!\n");
+            winnerTurn = GameState.P2_TURN;
         }
 
         UpdateUI(); 
@@ -143,7 +161,7 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         else
         {
             // === SOLO FIN DE BAZA ===
-            StartCoroutine(CleanTableRoutine());
+            StartCoroutine(CleanTableRoutine(winnerTurn));
         }
     }
 
@@ -223,12 +241,12 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         InteractionManager.Instance.SetInfoMessage($"Ronda terminada.\nSiguiente ronda: {InteractionManager.Instance.currentRoundCards} cartas.");
     }
 
-    IEnumerator CleanTableRoutine()
+    IEnumerator CleanTableRoutine(GameState nextTurn)
     {
         yield return new WaitForSeconds(1.5f);
         ClearTableNow();
         InteractionManager.Instance.isPaused = false;
-        InteractionManager.Instance.ChangeTurn();
+        InteractionManager.Instance.SetTurn(nextTurn);
     }
 
     IEnumerator GameOverSequence()

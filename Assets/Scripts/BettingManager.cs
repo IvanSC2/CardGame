@@ -38,24 +38,50 @@ public class BettingManager : MonoBehaviour
     public void StartBettingPhase(int numCards)
     {
         cardsInRound = numCards;
-        isP1Choosing = true; // Siempre empieza P1 por ahora (puedes rotarlo luego)
+        //isP1Choosing = true; // Siempre empieza P1 por ahora
         tableObject.SetActive(false);
         panelRoot.SetActive(true);
         if(InteractionManager.Instance != null) 
         InteractionManager.Instance.RefreshHandVisibility();
-    // ------------------------------
-        SetupUIForP1();
-        if(InteractionManager.Instance) InteractionManager.Instance.RefreshHandVisibility();
+    // --- Eleccion del sorteo ---
+        if (InteractionManager.Instance.currentMano == GameState.P1_TURN)
+        {
+            // Jugador 1 Apuesta Primero
+            isP1Choosing = true;
+            SetupUIForP1(false); // No es el último, no hay regla prohibida
+        }
+        else
+        {
+            // IA Apuesta Primero
+            isP1Choosing = false;
+            StartCoroutine(AIBetsFirstRoutine());
+        }
     }
 
-    private void SetupUIForP1()
+    private void SetupUIForP1(bool amILast)
     {
-        titleText.text = "TU TURNO: ¿Cuántas bazas ganarás?";
+        if (amILast)
+            titleText.text = $"IA APOSTÓ {p2Bet}. TU TURNO:";
+        else
+            titleText.text = "¿Cuántas bazas ganarás?";
         EnableButtons(true);
-        
-        // Regla: Si P1 es último, aplicar prohibida (Aquí asumimos P1 primero por simpleza)
+        // Calcular la apuesta prohibida si somos los segundos en hablar
+        int forbiddenBet = -1;
+        if (amILast) forbiddenBet = cardsInRound - p2Bet;
         for (int i = 0; i < betButtons.Length; i++)
-            betButtons[i].interactable = (i <= cardsInRound);
+        {
+            if (i <= cardsInRound)
+            {
+                betButtons[i].gameObject.SetActive(true);
+                // Si somos el último, no podemos pulsar el botón que sume el total de cartas
+                betButtons[i].interactable = (i != forbiddenBet);
+            }
+            else
+            {
+                // Ocultar botones de apuestas mayores al número de cartas de la ronda
+                betButtons[i].gameObject.SetActive(false);
+            }
+        }
     }
 
     // --- EL BOTÓN CLICADO POR TI ---
@@ -70,52 +96,81 @@ public class BettingManager : MonoBehaviour
             
             // EN LUGAR DE MOSTRAR BOTONES PARA P2, LANZAMOS LA IA
             DisableButtons(); // Que no toques nada
-            StartCoroutine(AIBettingRoutine());
+            if (InteractionManager.Instance.currentMano == GameState.P1_TURN)
+            {
+                // P1 empezó, así que ahora le toca a la IA (Piensa y responde)
+                StartCoroutine(AIBetsSecondRoutine());
+            }
+            else
+            {
+                // La IA empezó, y P1 acaba de responder. Terminamos la fase.
+                StartCoroutine(EndBettingPhase());
+            }
         }
     }
 
     // --- PENSAMIENTO DE LA IA ---
-    IEnumerator AIBettingRoutine()
+   IEnumerator AIBetsFirstRoutine()
+    {
+        titleText.text = "IA (MANO) ESTÁ PENSANDO...";
+        DisableButtons();
+        yield return new WaitForSeconds(1.5f); 
+
+        if (cardsInRound == 1)
+        {
+            var p1Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP1);
+            Card p1VisibleCard = (p1Hand.Count > 0) ? p1Hand[0] : null;
+            p2Bet = AIController.Instance.CalculateBlindBet(p1VisibleCard, 0, false); // false = no es el último
+        }
+        else
+        {
+            var p2Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP2);
+            p2Bet = AIController.Instance.CalculateAIBet(p2Hand, 0, cardsInRound, false); // false = no es el último
+        }
+
+        InteractionManager.Instance.SetInfoMessage($"IA APUESTA: {p2Bet}");
+        yield return new WaitForSeconds(1.0f);
+
+        // Ahora le damos el turno a P1 para que responda a la IA
+        isP1Choosing = true;
+        SetupUIForP1(true); // true = P1 es el último (Sufre Regla Prohibida)
+    }
+
+    // --- CORRUTINA 2: IA ES SEGUNDA (Responde al Jugador) ---
+    IEnumerator AIBetsSecondRoutine()
     {
         titleText.text = "IA ESTÁ PENSANDO...";
         yield return new WaitForSeconds(1.5f); 
 
-        // --- LÓGICA NUEVA ---
         if (cardsInRound == 1)
         {
-            // RONDA CIEGA: La IA mira TU carta (P1)
             var p1Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP1);
             Card p1VisibleCard = (p1Hand.Count > 0) ? p1Hand[0] : null;
-
-            p2Bet = AIController.Instance.CalculateBlindBet(p1VisibleCard, p1Bet, true);
+            p2Bet = AIController.Instance.CalculateBlindBet(p1VisibleCard, p1Bet, true); // true = es el último
         }
         else
         {
-            // RONDA NORMAL: La IA mira SU carta (P2)
             var p2Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP2);
-            p2Bet = AIController.Instance.CalculateAIBet(p2Hand, p1Bet, cardsInRound, true);
+            p2Bet = AIController.Instance.CalculateAIBet(p2Hand, p1Bet, cardsInRound, true); // true = es el último
         }
-        // --------------------
 
         InteractionManager.Instance.SetInfoMessage($"IA APUESTA: {p2Bet}");
         
         yield return new WaitForSeconds(1.0f);
+        StartCoroutine(EndBettingPhase());
+    }
+    IEnumerator EndBettingPhase()
+    {
         panelRoot.SetActive(false);
         tableObject.SetActive(true);
 
-        // --- BIFURCACIÓN FINAL ---
         if (cardsInRound == 1)
-        {
-            // Si es ronda de 1, NO jugamos cartas. Vamos directo a resolver.
             InteractionManager.Instance.ResolveBlindRoundImmediate();
-        }
         else
-        {
-            // Si es ronda normal, empezamos el juego
-            InteractionManager.Instance.InitializeGame();
-        }
+            InteractionManager.Instance.InitializeGame(); // Inicia la fase de jugar cartas
+            
+        yield return null;
     }
-
     // Helpers
     private void EnableButtons(bool enable) { foreach(var b in betButtons) b.gameObject.SetActive(enable); }
     private void DisableButtons() { foreach(var b in betButtons) b.gameObject.SetActive(false); }

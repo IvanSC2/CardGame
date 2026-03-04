@@ -21,7 +21,8 @@ public class InteractionManager : MonoBehaviour
     [Header("Estadísticas de Jugador")]
     public int p1Vidas = 3;
     public int p2Vidas = 3;
-
+    [Header("Control de Turnos")]
+    public GameState currentMano; // Almacena quién es el Mano en la ronda actual
     [Header("Referencias de Turno")]
     public CanvasGroup handGroupP1; 
     public CanvasGroup handGroupP2; 
@@ -44,17 +45,27 @@ public class InteractionManager : MonoBehaviour
     {
         if (Instance != null && Instance != this) Destroy(this.gameObject);
         else Instance = this;
-        
         currentState = GameState.WAITING;
+        
+        //--Sorteo del jugador que empieza--//
+        int sorteo = Random.Range(0,2);
+        currentMano= (sorteo ==0)? GameState.P1_TURN : GameState.P2_TURN;
+
+        
         UpdateVisualStates();
     }
 
     public void InitializeGame()
     {
         isPaused = false;
-        currentState = GameState.P1_TURN;
+        currentState = currentMano;
         UpdateVisualStates();
         RefreshHandVisibility();
+
+        if (currentState == GameState.P2_TURN)
+        {
+            StartCoroutine(AITurnRoutine());
+        }
     }
 
     // --- LÓGICA DE TOGGLE ---
@@ -110,7 +121,19 @@ public class InteractionManager : MonoBehaviour
             StartCoroutine(AITurnRoutine());
         }
     }
+    // --- NUEVO: Fuerza el turno para el ganador de la baza ---
+    public void SetTurn(GameState newTurn)
+    {
+        currentState = newTurn;
+        UpdateVisualStates();
+        ClearSelection();
 
+        // Si el ganador fue la IA, le decimos que empiece a pensar su jugada
+        if (currentState == GameState.P2_TURN)
+        {
+            StartCoroutine(AITurnRoutine());
+        }
+    }
     // Corrutina que controla el pensamiento y acción de la IA
     IEnumerator AITurnRoutine()
     {
@@ -231,6 +254,11 @@ public class InteractionManager : MonoBehaviour
 
         currentRoundCards = 5;
         roundDelta = -1;
+        //Sorteo
+        int sorteo= Random.Range(0,2);
+        currentMano = (sorteo ==0) ? GameState.P1_TURN : GameState.P2_TURN;
+        string nomMano= (currentMano == GameState.P1_TURN) ? "JUGADOR 1" : "JUGADOR 2";
+        SetInfoMessage($"Sorteo inicial: EMPIEZA {nomMano}");
 
         CardDatabase.GenerateDeck(); 
         ClearSelection();
@@ -253,6 +281,7 @@ public class InteractionManager : MonoBehaviour
             currentRoundCards = 5;
             roundDelta = -1;
         }
+       currentMano = (currentMano == GameState.P1_TURN) ? GameState.P2_TURN : GameState.P1_TURN;
         
         string tipoRonda = (currentRoundCards == 1) ? "RONDA CIEGA (INDIAN POKER)" : "NORMAL";
         Debug.Log($"<color=orange>PRÓXIMA RONDA: {currentRoundCards} CARTAS - {tipoRonda}</color>");
