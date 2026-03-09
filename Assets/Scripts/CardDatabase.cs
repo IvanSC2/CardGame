@@ -1,15 +1,16 @@
 using UnityEngine;
 using System.Collections.Generic;
-
+//Clase estatica con la lista virtual de cartas
 public class CardDatabase : MonoBehaviour
 {
+    //Baraja Unica Global
     public static List<Card> deck = new List<Card>();
     private static string[] suits = { "Corazones", "Diamantes", "Tréboles", "Picas" };
     private static string[] ranks = { "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K" };
 
     void Awake()
     {
-        GenerateOrderDeck();
+        //GenerateOrderDeck();
     }
     //Genera una Deck y la baraja
     public static void GenerateDeck()
@@ -21,6 +22,7 @@ public class CardDatabase : MonoBehaviour
     {
         GetDeck(false);
     }
+    //Genera una baraja recorriendo los ranks y suits
     public static void GetDeck(bool shuffle)
     {
         deck.Clear();
@@ -41,16 +43,15 @@ public class CardDatabase : MonoBehaviour
         {
             Shuffle();    
         }
-        //Cada vez que se crea una deck se baraja
+        
         
     }
 
-    // Añade esto a CardDatabase.cs
+    
 
     //devuelve una carta alatoria del mazo
     public static Card GetRandomCard()
     {
-        // Si por lo que sea el mazo está vacío, lo regeneramos
         if (deck == null || deck.Count == 0)
         {
             Debug.LogWarning("¡Crea una Nueva baraja");
@@ -59,10 +60,9 @@ public class CardDatabase : MonoBehaviour
         int index = Random.Range(0, deck.Count);
         return deck[index];
     }
-    //Baraja la deck y devuelve una lista de cartas (new Deck)
+    //Intercambia las posiciones de las cartas en la baraja de forma aletoria
     public static void Shuffle()
     {
-        // Usamos directamente 'deck', que es la instancia estática de la baraja
     for (int i = 0; i < deck.Count; i++)
     {
         Card temp = deck[i];
@@ -77,14 +77,14 @@ public class CardDatabase : MonoBehaviour
     // Método para ROBAR una carta (Sacarla del mazo)
     public static Card DrawTopCard()
 {
-    // 1. Seguridad total: Si no hay cartas, devolvemos NULL inmediatamente
+    //Si no hay cartas, devolvemos NULL inmediatamente
     if (deck == null || deck.Count <= 0)
     {
         Debug.LogWarning("¡El mazo se ha terminado! Saca Otra Baraja Nueva");
-        return null; // Salimos del método entregando "nada"
+        return null; 
     }
 
-    // 2. Si llegamos aquí, es que SÍ hay cartas
+    // Si hay cartas revolvemos la primera del mazo y eliminamos el indice
     Card cardToReturn = deck[0];
     deck.RemoveAt(0);
     return cardToReturn;

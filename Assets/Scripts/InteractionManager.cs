@@ -2,6 +2,7 @@ using UnityEngine;
 using TMPro;
 using System.Collections;
 using System.Collections.Generic;
+using UnityEngine.SceneManagement;
 
 public enum GameState {P1_TURN, P2_TURN, WAITING}
 
@@ -22,7 +23,7 @@ public class InteractionManager : MonoBehaviour
     public int p1Vidas = 3;
     public int p2Vidas = 3;
     [Header("Control de Turnos")]
-    public GameState currentMano; // Almacena quién es el Mano en la ronda actual
+    public GameState currentMano; 
     [Header("Referencias de Turno")]
     public CanvasGroup handGroupP1; 
     public CanvasGroup handGroupP2; 
@@ -54,14 +55,14 @@ public class InteractionManager : MonoBehaviour
         
         UpdateVisualStates();
     }
-
+    //Quita la pausa y asigna el turno
     public void InitializeGame()
     {
         isPaused = false;
         currentState = currentMano;
         UpdateVisualStates();
         RefreshHandVisibility();
-
+        //Si le toca a la IA Activa su corrutina
         if (currentState == GameState.P2_TURN)
         {
             StartCoroutine(AITurnRoutine());
@@ -244,7 +245,11 @@ public class InteractionManager : MonoBehaviour
     // =================================================================================
     // ⚙️ GESTIÓN DE ESTADO (GAME LOOP)
     // =================================================================================
-
+    public void StartNewGame()
+{
+    // Esto averigua cómo se llama la escena en la que estás ahora mismo, y la vuelve a cargar desde cero.
+    SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+}
     public void ResetGameTotal()
     {
         Debug.Log("🔄 REINICIANDO SISTEMA DE JUEGO...");

@@ -5,12 +5,12 @@ using UnityEngine.UI;
 public class CardResizer : MonoBehaviour
 {
     [Header("Referencias a Escalar")]
-    public RectTransform targetVisuals; // Arrastra aquí el contenido (Textos, Iconos...)
-    public RectTransform backgroundVisuals; // <--- NUEVO: Arrastra aquí tu Imagen de Fondo
+    public RectTransform targetVisuals; // Contenido
+    public RectTransform backgroundVisuals; //Imagen de Fondo
 
     [Header("Configuración")]
     public Vector2 referenceSize = new Vector2(200, 280); 
-
+    //Margen
     [Header("Ajuste Visual")]
     [Range(0.1f, 1f)] 
     public float scaleFactor = 0.85f; 

@@ -46,40 +46,31 @@ public class UICard : MonoBehaviour , IPointerClickHandler
         Sprite suitSprite = GetSuitSprite(card.suit);
         suitTop.sprite = suitSprite;
         suitBottom.sprite = suitSprite;
-        /*
-        // --- Artwork central ---
-        if (card.artwork != null)
-            artwork.sprite = card.artwork;
-        else
-            artwork.sprite = null;
-*/
+        
         // --- Color rojo/negro ---
         ApplySuitColor(card.suit);
         Debug.Log("Sprite loaded: " + (suitSprite != null));
 
         if (card.value >= 11 || card.value == 1)
         {
-            // A. TRUCO DE REUTILIZACIÓN:
+            // A. REUTILIZACIÓN:
             // Le decimos al generador de pips que dibuje un "1" (el centro),
             // independientemente de que la carta sea un 11, 12 o 13.
+            
+            pipsContainer.SetActive(true);
             GenerateDynamicPips(1, suitSprite); 
-
             // B. Encendemos el Overlay (La máscara de la figura)
             artworkFace.SetActive(true);
 
-            // C. Cargamos la foto correcta (Solo si no es As, que ya es bonito solo)
-            // Si quieres que el As también tenga marco, inclúyelo aquí.
+            // C. Cargamos la foto correcta
             string letter = "";
             if (card.value == 11) letter = "J";
             else if (card.value == 12) letter = "Q";
             else if (card.value == 13) letter = "K";
             else if (card.value == 1) letter = "A";
 
-            // Asignamos la imagen al componente Image del ArtworkFace
-            // Asumo que ArtworkFace tiene un componente Image
+            // Asigno la imagen al componente Image del ArtworkFace
             artworkFace.GetComponent<Image>().sprite = Resources.Load<Sprite>($"Artworks/{letter}");
-            
-            // Aseguramos que el overlay sea blanco (o el color que quieras)
             artworkFace.GetComponent<Image>().color = Color.white;
         }
         else
@@ -91,13 +82,13 @@ public class UICard : MonoBehaviour , IPointerClickHandler
         }
 
     }
-    // --- NUEVO: Control de Cara/Cruz ---
+    //Control de Cara / Cruz de las cartas
     public void SetFaceUp(bool isUp)
     {
         isFaceUp = isUp;
         UpdateVisibility();
     }
-
+    //Cambia imagen entre reverso y fenre y controla el contenido que aparece
     private void UpdateVisibility()
     {
         if (myBackground == null) return;
@@ -112,7 +103,7 @@ public class UICard : MonoBehaviour , IPointerClickHandler
         suitBottom.gameObject.SetActive(isFaceUp);
         
         if (pipsContainer != null) 
-            pipsContainer.SetActive(isFaceUp && cardData.value < 11 && cardData.value != 1);
+            pipsContainer.SetActive(isFaceUp);
         
         if (artworkFace != null) 
             artworkFace.SetActive(isFaceUp && (cardData.value >= 11 || cardData.value == 1));
@@ -129,11 +120,10 @@ public class UICard : MonoBehaviour , IPointerClickHandler
         rankTop.color = chosen;
         rankBottom.color = chosen;
 
-        // 🔽 Añade esto para colorear los iconos de palo
         suitTop.color = chosen;
         suitBottom.color = chosen;
 
-        // También coloreamos los pips del centro
+       //colorar pips del centro
         foreach (Image pip in allPips)
         {
             pip.color = chosen;
@@ -142,7 +132,7 @@ public class UICard : MonoBehaviour , IPointerClickHandler
 
     private void GenerateDynamicPips(int number, Sprite suitIcon)
     {
-        // 1. Definimos las coordenadas a encender (todo en minúsculas)
+        // 1. Definimos las coordenadas a encender 
         System.Collections.Generic.List<string> activePips = new System.Collections.Generic.List<string>();
 
         switch (number)
@@ -168,10 +158,10 @@ public class UICard : MonoBehaviour , IPointerClickHandler
             // B. Ponemos el icono correcto
             pip.sprite = suitIcon;
 
-            // C. Declaramos y limpiamos el nombre (ESTO ES LO QUE TE FALTABA)
+            // C. Declaramos y limpiamos el nombre
             string nameInUnity = pip.name.ToLower().Trim();
 
-            // D. El "Truco de la Transparencia":
+            // D. Transparencia
             // Si está en la lista -> enabled = true (Se ve)
             // Si NO está en la lista -> enabled = false (Invisible, pero ocupa espacio)
             pip.enabled = activePips.Contains(nameInUnity);
@@ -179,10 +169,6 @@ public class UICard : MonoBehaviour , IPointerClickHandler
     }
     private Sprite GetSuitSprite(string suit)
     {
-        // IMPORTANTE → mete tus sprites aquí:
-        // /Assets/Resources/Suits/Corazones.png
-        // /Assets/Resources/Suits/Diamantes.png
-        // /Assets/Resources/Suits/Tréboles.png
         // /Assets/Resources/Suits/Picas.png
         return Resources.Load<Sprite>($"Suits/{suit}");
     }
@@ -190,11 +176,10 @@ public class UICard : MonoBehaviour , IPointerClickHandler
     // Este método se dispara automáticamente cuando haces clic en el objeto UI
     public void OnPointerClick(PointerEventData eventData)
     {
-        // Le decimos al manager: "¡Eh! Me han clicado a mí"
+        // Llamamos al manager
         InteractionManager.Instance.SelectCard(this);
         
-        // (Opcional) Feedback visual rápido para saber que funcionó
-        // Por ejemplo, oscurecer un poco la carta seleccionada
+        // Aqui se puede oscurecer la carta al tocarla
        // GetComponent<Image>().color = Color.yellow; 
     }
 }
