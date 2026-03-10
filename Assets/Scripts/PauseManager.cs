@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem; // <--- NUEVO: Importamos el nuevo Input System
+using UnityEngine.SceneManagement;
 
 public class PauseManager : MonoBehaviour
 {
@@ -53,12 +54,7 @@ public class PauseManager : MonoBehaviour
 
     public void QuitGame()
     {
-        Debug.Log("Saliendo del juego...");
-        Application.Quit();
-        
-        #if UNITY_EDITOR
-        UnityEditor.EditorApplication.isPlaying = false;
-        #endif
+        SceneManager.LoadScene("MainMenu");
     }
 
     private void SetPauseState(bool isPaused)

@@ -7,14 +7,14 @@ using System.Collections.Generic;
 public class BettingManager : MonoBehaviour
 {
     public static BettingManager Instance;
-    
+
     [Header("UI References")]
     public GameObject panelRoot;
     public TextMeshProUGUI titleText;
-    public Button[] betButtons; 
-    
+    public Button[] betButtons;
+
     [Header("Referencias de Escena")]
-    public GameObject tableObject; 
+    public GameObject tableObject;
 
     [Header("Game State")]
     public int cardsInRound = 5;
@@ -30,7 +30,7 @@ public class BettingManager : MonoBehaviour
 
         for (int i = 0; i < betButtons.Length; i++)
         {
-            int val = i; 
+            int val = i;
             betButtons[i].onClick.AddListener(() => OnBetClicked(val));
         }
     }
@@ -38,12 +38,12 @@ public class BettingManager : MonoBehaviour
     public void StartBettingPhase(int numCards)
     {
         cardsInRound = numCards;
-        //isP1Choosing = true; // Siempre empieza P1 por ahora
+
         tableObject.SetActive(false);
         panelRoot.SetActive(true);
-        if(InteractionManager.Instance != null) 
-        InteractionManager.Instance.RefreshHandVisibility();
-    // --- Eleccion del sorteo ---
+        if (InteractionManager.Instance != null)
+            InteractionManager.Instance.RefreshHandVisibility();
+        // --- Eleccion del sorteo ---
         if (InteractionManager.Instance.currentMano == GameState.P1_TURN)
         {
             // Jugador 1 Apuesta Primero
@@ -91,9 +91,9 @@ public class BettingManager : MonoBehaviour
         {
             p1Bet = amount;
             InteractionManager.Instance.SetInfoMessage($"P1 APUESTA: {p1Bet}");
-            
+
             isP1Choosing = false;
-            
+
             // EN LUGAR DE MOSTRAR BOTONES PARA P2, LANZAMOS LA IA
             DisableButtons(); // Que no toques nada
             if (InteractionManager.Instance.currentMano == GameState.P1_TURN)
@@ -110,11 +110,11 @@ public class BettingManager : MonoBehaviour
     }
 
     // --- PENSAMIENTO DE LA IA ---
-   IEnumerator AIBetsFirstRoutine()
+    IEnumerator AIBetsFirstRoutine()
     {
         titleText.text = "IA (MANO) ESTÁ PENSANDO...";
         DisableButtons();
-        yield return new WaitForSeconds(1.5f); 
+        yield return new WaitForSeconds(1.5f);
 
         if (cardsInRound == 1)
         {
@@ -140,7 +140,7 @@ public class BettingManager : MonoBehaviour
     IEnumerator AIBetsSecondRoutine()
     {
         titleText.text = "IA ESTÁ PENSANDO...";
-        yield return new WaitForSeconds(1.5f); 
+        yield return new WaitForSeconds(1.5f);
 
         if (cardsInRound == 1)
         {
@@ -155,7 +155,7 @@ public class BettingManager : MonoBehaviour
         }
 
         InteractionManager.Instance.SetInfoMessage($"IA APUESTA: {p2Bet}");
-        
+
         yield return new WaitForSeconds(1.0f);
         StartCoroutine(EndBettingPhase());
     }
@@ -168,21 +168,21 @@ public class BettingManager : MonoBehaviour
             InteractionManager.Instance.ResolveBlindRoundImmediate();
         else
             InteractionManager.Instance.InitializeGame(); // Inicia la fase de jugar cartas
-            
+
         yield return null;
     }
     // Helpers
-    private void EnableButtons(bool enable) { foreach(var b in betButtons) b.gameObject.SetActive(enable); }
-    private void DisableButtons() { foreach(var b in betButtons) b.gameObject.SetActive(false); }
+    private void EnableButtons(bool enable) { foreach (var b in betButtons) b.gameObject.SetActive(enable); }
+    private void DisableButtons() { foreach (var b in betButtons) b.gameObject.SetActive(false); }
 
     // Método auxiliar para convertir UICards visuales a Datos Card
     private List<Card> GetCardsFromGroup(CanvasGroup group)
     {
         List<Card> list = new List<Card>();
-        foreach(Transform t in group.transform)
+        foreach (Transform t in group.transform)
         {
             UICard ui = t.GetComponent<UICard>();
-            if(ui != null) list.Add(ui.cardData);
+            if (ui != null) list.Add(ui.cardData);
         }
         return list;
     }

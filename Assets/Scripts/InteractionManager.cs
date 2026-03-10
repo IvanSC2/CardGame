@@ -51,7 +51,10 @@ public class InteractionManager : MonoBehaviour
         //--Sorteo del jugador que empieza--//
         int sorteo = Random.Range(0,2);
         currentMano= (sorteo ==0)? GameState.P1_TURN : GameState.P2_TURN;
-
+        string[] nombresDificultad = { "Pacifico", "Normal", "Difícil", "Experto", "Imposible" };
+        int numBots = GameConfig.nPlayers; 
+        int difIndex = GameConfig.difficulty;
+        SetInfoMessage($"Numero de bots: {numBots}\nDificultad: {nombresDificultad[difIndex]}");
         
         UpdateVisualStates();
     }

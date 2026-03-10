@@ -2,7 +2,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using System.Collections;
 using TMPro; 
-
+//Controlador de la mesa fisica y arbitro del juego
 public class TableZone : MonoBehaviour, IPointerClickHandler
 {
     public static TableZone Instance;
@@ -112,9 +112,6 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         Debug.Log("--- FIN DE RONDA CIEGA ---");
         
         // Llamamos a la lógica de apuestas existente
-        // (Como es privada, o la haces pública, o copias la lógica aquí. 
-        //  RECOMENDACIÓN: Haz pública 'ResolverApuestas' o copia esto:)
-        
         StartCoroutine(WaitAndResolveRound());
     }
     private void CheckWinner()
