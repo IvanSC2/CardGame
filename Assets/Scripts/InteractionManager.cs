@@ -27,6 +27,13 @@ public class InteractionManager : MonoBehaviour
     [Header("Referencias de Turno")]
     public CanvasGroup handGroupP1; 
     public CanvasGroup handGroupP2; 
+
+    [Header("Estadísticas Globales")]
+    public int rondasJugadasTotales = 0;
+    public int p1ApuestasAcertadas = 0;
+    public int p2ApuestasAcertadas = 0;
+    public int p1BazasTotales = 0;
+    public int p2BazasTotales = 0;
     
     public GameState currentState;
     public UICard SelectedCard { get; private set; }
@@ -253,7 +260,7 @@ public class InteractionManager : MonoBehaviour
     // Esto averigua cómo se llama la escena en la que estás ahora mismo, y la vuelve a cargar desde cero.
     SceneManager.LoadScene(SceneManager.GetActiveScene().name);
 }
-    public void ResetGameTotal()
+    /*public void ResetGameTotal()
     {
         Debug.Log("🔄 REINICIANDO SISTEMA DE JUEGO...");
 
@@ -273,7 +280,7 @@ public class InteractionManager : MonoBehaviour
 
         Debug.Log("✅ JUEGO NUEVO LISTO.");
     }
-
+*/
     public void AdvanceRoundSequence()
     {
         currentRoundCards += roundDelta;

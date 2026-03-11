@@ -184,9 +184,15 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         
         string mensajeResultado = "";
 
+
+        InteractionManager.Instance.rondasJugadasTotales++;
+        InteractionManager.Instance.p1BazasTotales += p1Wins;
+        InteractionManager.Instance.p2BazasTotales += p2Wins;
+
         // JUGADOR 1
         if (p1Wins == apuestaP1) {
             mensajeResultado += "P1: CUMPLE.\n";
+            InteractionManager.Instance.p1ApuestasAcertadas++;
         } else {
             InteractionManager.Instance.p1Vidas--;
             mensajeResultado += "P1: PIERDE VIDA.\n";
@@ -195,6 +201,7 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         // JUGADOR 2
         if (p2Wins == apuestaP2) {
             mensajeResultado += "P2: CUMPLE.\n";
+            InteractionManager.Instance.p1ApuestasAcertadas++;
         } else {
             InteractionManager.Instance.p2Vidas--;
             mensajeResultado += "P2: PIERDE VIDA.\n";
@@ -212,9 +219,7 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
             else if (InteractionManager.Instance.p2Vidas > 0) ganador = "JUGADOR 2";
             else ganador = "NADIE";
 
-            InteractionManager.Instance.SetInfoMessage($"GAME OVER \nGANADOR: {ganador}");
-            
-            StartCoroutine(GameOverSequence());
+            PauseManager.Instance.TriggerGameOver(ganador);
         }
     }
 
@@ -259,7 +264,7 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         UpdateUI();
 
         // Reinicio Total
-        InteractionManager.Instance.ResetGameTotal();
+       // InteractionManager.Instance.ResetGameTotal();
 
         InteractionManager.Instance.isPaused = false;
         UpdateUI(); 
