@@ -68,6 +68,7 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
             cardToMove.transform.SetParent(this.transform);
             cardToMove.transform.localPosition = Vector3.zero;
             cardToMove.transform.localScale = Vector3.one;
+            cardToMove.transform.localEulerAngles = Vector3.zero;
 
             if (isP1) currentCardP1 = cardToMove;
             if (isP2) currentCardP2 = cardToMove;
