@@ -10,11 +10,11 @@ public class PauseManager : MonoBehaviour
 
     [Header("UI References")]
     public GameObject pausePanel;
-    public TMP_Text titleText;       // NUEVO: El texto que dice "PAUSA"
-    public GameObject resumeButton;  // NUEVO: El botón de "Reanudar
+    public TMP_Text titleText;       
+    public GameObject resumeButton;  
     [Header("Control de Estados")]
     public bool isGameOver = false;  
-    public TMP_Text statsText;       // NUEVO: Arrastra aquí el texto de en medio
+    public TMP_Text statsText;      
 
     private void Awake()
     {

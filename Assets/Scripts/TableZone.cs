@@ -51,6 +51,7 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         if (InteractionManager.Instance.HasCardSelected())
         {
             UICard cardToMove = InteractionManager.Instance.SelectedCard;
+            Transform manoOriginal = cardToMove.transform.parent;
             // Identificamos al dueño ANTES de cambiarle el Parent ---
             bool isP1 = cardToMove.transform.parent == InteractionManager.Instance.handGroupP1.transform;
             bool isP2 = cardToMove.transform.parent == InteractionManager.Instance.handGroupP2.transform;
@@ -69,6 +70,16 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
             cardToMove.transform.localPosition = Vector3.zero;
             cardToMove.transform.localScale = Vector3.one;
             cardToMove.transform.localEulerAngles = Vector3.zero;
+            cardToMove.transform.localScale = new Vector3(0.85f, 0.85f, 0.85f);
+
+            if (manoOriginal != null)
+            {
+                HandLayoutFanner fanner = manoOriginal.GetComponent<HandLayoutFanner>();
+                if (fanner != null)
+                {
+                    fanner.ReorganizarCartas();
+                }
+            }
 
             if (isP1) currentCardP1 = cardToMove;
             if (isP2) currentCardP2 = cardToMove;
