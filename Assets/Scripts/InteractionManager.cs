@@ -62,12 +62,24 @@ public class InteractionManager : MonoBehaviour
         int numBots = GameConfig.nPlayers; 
         int difIndex = GameConfig.difficulty;
         SetInfoMessage($"Numero de bots: {numBots}\nDificultad: {nombresDificultad[difIndex]}");
-        
+        if (TableManagerLayout.Instance != null)
+        {
+            TableManagerLayout.Instance.GenerarMesa(numBots + 1);
+
+            // Inmediatamente después, enganchamos las manos buenas
+            if (TableManagerLayout.Instance.manosActivas.Count >= 2)
+            {
+                handGroupP1 = TableManagerLayout.Instance.manosActivas[0];
+                handGroupP2 = TableManagerLayout.Instance.manosActivas[1];
+                Debug.Log("[SYSTEM] Manos dinámicas vinculadas con éxito. Ignorando molde.");
+            }
+        }
         UpdateVisualStates();
     }
     //Quita la pausa y asigna el turno
     public void InitializeGame()
     {
+       
         isPaused = false;
         currentState = currentMano;
         UpdateVisualStates();

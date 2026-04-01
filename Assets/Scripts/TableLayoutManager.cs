@@ -23,7 +23,7 @@ public class TablePerspectiveManager : MonoBehaviour
     void Update()
     {
         if (handAreas == null || handAreas.Count == 0) return;
-
+        int totalJugadores = handAreas.Count;
         for (int i = 0; i < handAreas.Count; i++)
         {
             if (handAreas[i] != null)
@@ -31,16 +31,26 @@ public class TablePerspectiveManager : MonoBehaviour
                 // Ahora lee exactamente la casilla "Pos Y" de tu Inspector
                 float posYActual = handAreas[i].anchoredPosition.y;
 
-                // Te muestro los números en el Inspector para que no vayas a ciegas
+                // Muestro los números en el Inspector 
                 if (i == 0) posY_Leida_P1 = posYActual;
                 if (i == 1) posY_Leida_P2 = posYActual;
 
                 // Calcula la regla de tres
                 float porcentaje = Mathf.InverseLerp(yAbajo, yFondo, posYActual);
                 float escalaCalculada = Mathf.Lerp(escalaFrente, escalaFondo, porcentaje);
+                // 2. NUEVO: Calculamos el multiplicador por "aglomeración"
+                float multOcupacion = 1f;
+                
+                // Si el nombre del objeto NO termina en "P1", es un BOT.
+                if (!handAreas[i].gameObject.name.Contains("P1"))
+                {
+                    if (totalJugadores == 5) multOcupacion = 0.95f; // 25% más pequeñas
+                    else if (totalJugadores >= 6) multOcupacion = 0.90f; // 35% más pequeñas
+                }
+                float escalaFinal = escalaCalculada * multOcupacion;
 
                 // Aplica el tamaño
-                handAreas[i].localScale = new Vector3(escalaCalculada, escalaCalculada, escalaCalculada);
+                handAreas[i].localScale = new Vector3(escalaFinal, escalaFinal, escalaFinal);
             }
         }
     }

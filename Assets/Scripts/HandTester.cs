@@ -1,6 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
-using System.Collections.Generic; // Necesario para usar Listas
+using System.Collections.Generic;
 
 public class HandTester : MonoBehaviour
 {
@@ -10,17 +10,16 @@ public class HandTester : MonoBehaviour
     public Button showDeckButton; 
 
     [Header("Contenedores")]
+    // Conservamos las variables para que el Inspector no se queje, pero ya no usamos 'handArea' para jugar.
     public Transform handArea;    
     public Transform fullHandArea; 
 
     void Start()
     {
-        // Suscribimos los botones a los métodos
         if (drawHandButton != null) drawHandButton.onClick.AddListener(DrawNewHand);
         if (showDeckButton != null) showDeckButton.onClick.AddListener(ShowFullDeck);
     }
 
-    // MÉTODO 1: Sacar 5 cartas (Modo Juego + Multijugador)
     public void DrawNewHand()
     {
         PrepararVista(esGrid: false);
@@ -37,70 +36,39 @@ public class HandTester : MonoBehaviour
             cardsToDeal = InteractionManager.Instance.currentRoundCards;
         }
 
-        // Calculamos cartas para Ti + la IA + los jugadores generados nuevos
-        int jugadoresExtra = (TableManagerLayout.Instance != null) ? TableManagerLayout.Instance.manosActivas.Count : 0;
-        int totalCartasNecesarias = cardsToDeal * (2 + jugadoresExtra); 
+        // 2. Calculamos cartas necesarias usando la mesa dinámica
+        int totalJugadores = 2; // Por defecto
+        if (TableManagerLayout.Instance != null && TableManagerLayout.Instance.manosActivas.Count > 0)
+        {
+            totalJugadores = TableManagerLayout.Instance.manosActivas.Count;
+        }
+
+        int totalCartasNecesarias = cardsToDeal * totalJugadores; 
 
         if(CardDatabase.deck == null || CardDatabase.deck.Count < totalCartasNecesarias)
         {
-            Debug.LogWarning("⚠️No quedan cartas suficientes en el mazo. Crea uno nuevo");
+            Debug.LogWarning("⚠️ No quedan cartas suficientes en el mazo. Crea uno nuevo");
             return;
         }
 
-        // 2. EXTRA DE SEGURIDAD: Destruimos cualquier carta basura que tuviera la IA
-        Transform aiHandArea = null;
-        if (InteractionManager.Instance != null && InteractionManager.Instance.handGroupP2 != null)
-        {
-             aiHandArea = InteractionManager.Instance.handGroupP2.transform;
-             // foreach (Transform child in aiHandArea) Destroy(child.gameObject);
-        }
-
-        // 3. REPARTIMOS AL JUGADOR 1 (Tú)
-        for (int i = 0; i < cardsToDeal; i++) 
-        {
-            Card data = CardDatabase.DrawTopCard();
-            if (data == null) break;
-            InstanciarCarta(data, handArea);
-        }
-        // ---> LLAMAMOS AL CRUPIER DEL JUGADOR 1 <---
-        if (handArea != null)
-        {
-            HandLayoutFanner fannerP1 = handArea.GetComponent<HandLayoutFanner>();
-            if (fannerP1 != null) fannerP1.ReorganizarCartas();
-        }
-
-        // 4. REPARTIMOS AL JUGADOR 2 (La IA)
-        if (aiHandArea != null)
-        {
-            for (int i = 0; i < cardsToDeal; i++) 
-            {
-                Card data = CardDatabase.DrawTopCard();
-                if (data == null) break;
-                InstanciarCarta(data, aiHandArea);
-            }
-            // ---> LLAMAMOS AL CRUPIER DE LA IA <---
-            HandLayoutFanner fannerIA = aiHandArea.GetComponent<HandLayoutFanner>();
-            if (fannerIA != null) fannerIA.ReorganizarCartas();
-        }
-
-        // 5. REPARTIMOS A LOS JUGADORES DEL CONTENEDOR HA
+        // 3. REPARTIMOS A TODOS DESDE LA LISTA DINÁMICA (Ignorando los moldes)
         if (TableManagerLayout.Instance != null)
         {
             foreach (CanvasGroup mano in TableManagerLayout.Instance.manosActivas)
             {
-                if (mano == null) continue; // Por si acaso la mano no existe
+                if (mano == null) continue;
                 
                 for (int i = 0; i < cardsToDeal; i++) 
                 {
                     Card data = CardDatabase.DrawTopCard();
                     if (data == null) break;
                     
-                    // Instanciamos la carta dentro del HandArea generado
+                    // Instanciamos la carta directamente en esta silla
                     InstanciarCarta(data, mano.transform);
                 }
 
-                // ---> LLAMAMOS AL CRUPIER DE ESTA MANO DINÁMICA <---
-                HandLayoutFanner fannerMesa = mano.GetComponentInParent<HandLayoutFanner>();
+                // Llamamos al crupier de esta silla para que haga el abanico
+                HandLayoutFanner fannerMesa = mano.GetComponent<HandLayoutFanner>();
                 if (fannerMesa != null) 
                 {
                     fannerMesa.ReorganizarCartas();
@@ -108,13 +76,13 @@ public class HandTester : MonoBehaviour
             }
         }
 
-        // 6. Aplicamos las reglas visuales (para tapar cartas si es Ronda Ciega)
+        // 4. Aplicamos las reglas visuales (para tapar cartas si es Ronda Ciega)
         if (InteractionManager.Instance != null)
         {
             InteractionManager.Instance.RefreshHandVisibility();
         }
 
-        // 7. Iniciamos la fase de apuestas
+        // 5. Iniciamos la fase de apuestas
         if (BettingManager.Instance != null)
         {
             BettingManager.Instance.StartBettingPhase(cardsToDeal);
@@ -123,7 +91,6 @@ public class HandTester : MonoBehaviour
    
     public void ShowFullDeck()
     {
-        // 1. LÓGICA DE TOGGLE: Si el panel ya está encendido, lo apagamos y salimos.
         if (fullHandArea.gameObject.activeSelf)
         {
             fullHandArea.gameObject.SetActive(false); 
@@ -132,38 +99,47 @@ public class HandTester : MonoBehaviour
         }
 
         fullHandArea.gameObject.SetActive(true);
-        
         foreach (Transform child in fullHandArea) Destroy(child.gameObject);
 
-        // 3. Comprobación de seguridad
         if (CardDatabase.deck == null || CardDatabase.deck.Count == 0)
         {
             Debug.LogWarning("El mazo está vacío. No hay cartas que mostrar.");
             return; 
         }
 
-        // 4. Instanciamos SOLO las cartas restantes
         List<Card> cartasRestantes = new List<Card>(CardDatabase.deck);
-        
         foreach (Card card in cartasRestantes)
         {
             InstanciarCarta(card, fullHandArea);
         }
     }
 
-    // --- MÉTODOS DE APOYO PARA NO REPETIR ---
-
     private void PrepararVista(bool esGrid)
     {
-        // Activamos un área y desactivamos la otra
-        handArea.gameObject.SetActive(!esGrid);
         fullHandArea.gameObject.SetActive(esGrid);
 
-        // Limpiamos el área que vamos a usar
-        Transform areaActiva = esGrid ? fullHandArea : handArea;
-        foreach (Transform child in areaActiva)
+        // Limpiamos las áreas correspondientes
+        if (esGrid)
         {
-            if(child.gameObject.name.Contains("CardPrefab")){Destroy(child.gameObject);}
+            foreach (Transform child in fullHandArea)
+            {
+                if(child.gameObject.name.Contains("CardPrefab")) Destroy(child.gameObject);
+            }
+        }
+        else
+        {
+            // Limpiamos TODAS las manos dinámicas de la mesa antes de repartir
+            if (TableManagerLayout.Instance != null)
+            {
+                foreach (CanvasGroup mano in TableManagerLayout.Instance.manosActivas)
+                {
+                    if (mano == null) continue;
+                    foreach (Transform child in mano.transform)
+                    {
+                        if(child.GetComponent<UICard>() != null) Destroy(child.gameObject);
+                    }
+                }
+            }
         }
     }
 
