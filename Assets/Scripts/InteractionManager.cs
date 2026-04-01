@@ -49,19 +49,29 @@ public class InteractionManager : MonoBehaviour
         Debug.Log("[INFO-UI]: " + message);
     }
 
-    private void Awake()
+   private void Awake()
     {
+        // 1. Configuración propia del Singleton y estado
         if (Instance != null && Instance != this) Destroy(this.gameObject);
         else Instance = this;
         currentState = GameState.WAITING;
         
-        //--Sorteo del jugador que empieza--//
+        // 2. Sorteo del jugador que empieza
         int sorteo = Random.Range(0,2);
         currentMano= (sorteo ==0)? GameState.P1_TURN : GameState.P2_TURN;
         string[] nombresDificultad = { "Pacifico", "Normal", "Difícil", "Experto", "Imposible" };
         int numBots = GameConfig.nPlayers; 
         int difIndex = GameConfig.difficulty;
         SetInfoMessage($"Numero de bots: {numBots}\nDificultad: {nombresDificultad[difIndex]}");
+        
+        UpdateVisualStates();
+    }
+
+    private void Start()
+    {
+        // 3. Hablamos con otros scripts una vez que TODOS están despiertos
+        int numBots = GameConfig.nPlayers; 
+        
         if (TableManagerLayout.Instance != null)
         {
             TableManagerLayout.Instance.GenerarMesa(numBots + 1);
@@ -74,7 +84,10 @@ public class InteractionManager : MonoBehaviour
                 Debug.Log("[SYSTEM] Manos dinámicas vinculadas con éxito. Ignorando molde.");
             }
         }
-        UpdateVisualStates();
+        else
+        {
+            Debug.LogError("Error: TableManagerLayout no encontrado al arrancar.");
+        }
     }
     //Quita la pausa y asigna el turno
     public void InitializeGame()

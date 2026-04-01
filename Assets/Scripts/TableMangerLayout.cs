@@ -31,7 +31,7 @@ public class TableManagerLayout : MonoBehaviour
     private void Start()
     {
 
-        GenerarMesa(numBots+1);
+        //GenerarMesa(numBots+1);
     }
 
     public void GenerarMesa(int numJugadores)
