@@ -10,7 +10,6 @@ public class HandTester : MonoBehaviour
     public Button showDeckButton; 
 
     [Header("Contenedores")]
-    // Conservamos las variables para que el Inspector no se queje, pero ya no usamos 'handArea' para jugar.
     public Transform handArea;    
     public Transform fullHandArea; 
 
@@ -36,38 +35,56 @@ public class HandTester : MonoBehaviour
             cardsToDeal = InteractionManager.Instance.currentRoundCards;
         }
 
-        // 2. Calculamos cartas necesarias usando la mesa dinámica
-        int totalJugadores = 2; // Por defecto
+        // 2. Calculamos cartas necesarias SOLO para los VIVOS
+        int totalJugadores = 2; 
         if (TableManagerLayout.Instance != null && TableManagerLayout.Instance.manosActivas.Count > 0)
         {
             totalJugadores = TableManagerLayout.Instance.manosActivas.Count;
         }
 
-        int totalCartasNecesarias = cardsToDeal * totalJugadores; 
+        int jugadoresVivos = 0;
+        if (InteractionManager.Instance != null)
+        {
+            for (int i = 0; i < totalJugadores; i++)
+            {
+                if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivos++;
+            }
+        }
+        else
+        {
+            jugadoresVivos = totalJugadores; // Fallback por si no hay manager
+        }
+
+        int totalCartasNecesarias = cardsToDeal * jugadoresVivos; 
 
         if(CardDatabase.deck == null || CardDatabase.deck.Count < totalCartasNecesarias)
         {
-            Debug.LogWarning("⚠️ No quedan cartas suficientes en el mazo. Crea uno nuevo");
+            Debug.LogWarning($"⚠️ No quedan cartas. Necesitas {totalCartasNecesarias} pero hay {CardDatabase.deck?.Count}");
             return;
         }
 
-        // 3. REPARTIMOS A TODOS DESDE LA LISTA DINÁMICA (Ignorando los moldes)
+        // 3. REPARTIMOS SOLO A LOS VIVOS
         if (TableManagerLayout.Instance != null)
         {
-            foreach (CanvasGroup mano in TableManagerLayout.Instance.manosActivas)
+            for (int j = 0; j < TableManagerLayout.Instance.manosActivas.Count; j++)
             {
+                CanvasGroup mano = TableManagerLayout.Instance.manosActivas[j];
                 if (mano == null) continue;
+                
+                // Filtro para saltar a los muertos
+                if (InteractionManager.Instance != null && InteractionManager.Instance.vidas[j] <= 0)
+                {
+                    continue; // Está eliminado, nos lo saltamos y no le damos cartas.
+                }
                 
                 for (int i = 0; i < cardsToDeal; i++) 
                 {
                     Card data = CardDatabase.DrawTopCard();
                     if (data == null) break;
                     
-                    // Instanciamos la carta directamente en esta silla
                     InstanciarCarta(data, mano.transform);
                 }
 
-                // Llamamos al crupier de esta silla para que haga el abanico
                 HandLayoutFanner fannerMesa = mano.GetComponent<HandLayoutFanner>();
                 if (fannerMesa != null) 
                 {
@@ -76,7 +93,7 @@ public class HandTester : MonoBehaviour
             }
         }
 
-        // 4. Aplicamos las reglas visuales (para tapar cartas si es Ronda Ciega)
+        // 4. Aplicamos las reglas visuales
         if (InteractionManager.Instance != null)
         {
             InteractionManager.Instance.RefreshHandVisibility();
@@ -118,7 +135,6 @@ public class HandTester : MonoBehaviour
     {
         fullHandArea.gameObject.SetActive(esGrid);
 
-        // Limpiamos las áreas correspondientes
         if (esGrid)
         {
             foreach (Transform child in fullHandArea)
@@ -128,7 +144,6 @@ public class HandTester : MonoBehaviour
         }
         else
         {
-            // Limpiamos TODAS las manos dinámicas de la mesa antes de repartir
             if (TableManagerLayout.Instance != null)
             {
                 foreach (CanvasGroup mano in TableManagerLayout.Instance.manosActivas)

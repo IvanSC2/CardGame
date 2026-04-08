@@ -1,8 +1,8 @@
 using UnityEngine;
-using UnityEngine.InputSystem; // <--- NUEVO: Importamos el nuevo Input System
+using UnityEngine.InputSystem; 
 using UnityEngine.SceneManagement;
-using TMPro; // Necesario para cambiar el texto del título
-using UnityEngine.UI; // Necesario para desactivar botones
+using TMPro; 
+using UnityEngine.UI; 
 
 public class PauseManager : MonoBehaviour
 {
@@ -12,8 +12,11 @@ public class PauseManager : MonoBehaviour
     public GameObject pausePanel;
     public TMP_Text titleText;       
     public GameObject resumeButton;  
+    public GameObject spectateButton; 
+    
     [Header("Control de Estados")]
     public bool isGameOver = false;  
+    public bool isSpectating = false; 
     public TMP_Text statsText;      
 
     private void Awake()
@@ -27,9 +30,8 @@ public class PauseManager : MonoBehaviour
 
     private void Update()
     {
-
-        // Anulamos la tecla de esc si Se ejecuta el panel de GameOver
         if (isGameOver) return;
+        
         if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
         {
             TogglePause();
@@ -39,7 +41,18 @@ public class PauseManager : MonoBehaviour
     public void TogglePause()
     {   
         if (isGameOver) return;
+        
         bool currentState = InteractionManager.Instance.isPaused;
+        
+        // Si estamos a punto de pausar normalmente (no por morir)
+        if (!currentState)
+        {
+            if (titleText != null) titleText.text = "PAUSA";
+            if (resumeButton != null) resumeButton.SetActive(true);
+            if (spectateButton != null) spectateButton.SetActive(false);
+            if (statsText != null) statsText.gameObject.SetActive(false); // Ocultamos las stats en pausa normal
+        }
+
         SetPauseState(!currentState);
     }
 
@@ -49,52 +62,75 @@ public class PauseManager : MonoBehaviour
         SetPauseState(false);
     }
 
-    public void TriggerGameOver(string ganador)
+    //  RECIBE EL PUESTO NUMÉRICO 
+    public void TriggerGameOver(int puesto)
     {
-        isGameOver = true; // Echamos el candado al sistema
-        SetPauseState(true);
-        // Mutamos la Interfaz
+        isGameOver = true; 
+        
         if (titleText != null) 
-            titleText.text = $"GAME OVER";
+            titleText.text = "GAMEOVER"; 
             
-        if (resumeButton != null) 
-            resumeButton.SetActive(false); // Escondemos el botón de seguir jugando
+        // 1. Contamos cuántos vivos quedan en toda la mesa
+        int jugadoresVivos = 0;
+        if (InteractionManager.Instance != null)
+        {
+            for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+            {
+                if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivos++;
+            }
+        }
 
-        // =======================================================
-        // CONSTRUCCIÓN DE COLUMNAS DE ESTADÍSTICAS
-        // =======================================================
+        // 2. Cambio de botones para el modo Game Over
+        if (resumeButton != null) resumeButton.SetActive(false); 
+        
+        // Activamos "Espectar" si quedan al menos 2 personas para jugar.
+        if (spectateButton != null) 
+        {
+            bool sePuedeEspectar = (jugadoresVivos > 1);
+            spectateButton.SetActive(sePuedeEspectar);
+        }
+
         if (statsText != null)
         {
-            statsText.gameObject.SetActive(true); // Lo encendemos
+            statsText.gameObject.SetActive(true); 
 
             var im = InteractionManager.Instance;
             int rondas = im.rondasJugadasTotales;
 
-            
             string stats = 
-                "<b><color=#5A9BD5>JUGADOR 1</color></b> <pos=50%><b><color=#ED7D31>JUGADOR 2 (IA)</color></b>\n\n" +
-                $"Precisión: {im.p1ApuestasAcertadas} / {rondas} <pos=50%>Precisión: {im.p2ApuestasAcertadas} / {rondas}\n" +
-                $"Bazas Totales: {im.p1BazasTotales} <pos=50%>Bazas Totales: {im.p2BazasTotales}\n" +
-                $"Vidas Restantes: {im.p1Vidas} <pos=50%>Vidas Restantes: {im.p2Vidas}";
+                $"Puesto No {puesto}\n"+
+                $"Apuestas Cumplidas: <b>{im.apuestasAcertadasTotales[0]}</b> / {rondas}\n" +
+                $"Bazas Ganadas: <b>{im.bazasTotales[0]}</b>\n" ;
 
             statsText.text = stats;
+            statsText.alignment = TextAlignmentOptions.Center; 
         }    
+        
+        // Activamos el panel al final con toda la UI ya configurada
+        SetPauseState(true);
     }
+
+    // MODO ESPECTADOR 
+    public void SpectateGame()
+    {
+        isGameOver = false; // Ya no estamos en la pantalla final
+        isSpectating = true; // Pero somos un fantasma
+        SetPauseState(false); // Quitamos la pausa y escondemos el panel
+        
+        InteractionManager.Instance.SetInfoMessage("MODO ESPECTADOR: Viendo jugar a los bots.");
+    }
+
     public void RestartGame()
     {
         Time.timeScale = 1f; 
         isGameOver = false;
+        isSpectating = false;
         SetPauseState(false);
-        if (CardDatabase.deck != null)
-        {
-            CardDatabase.deck.Clear();
-        }
+        
+        if (CardDatabase.deck != null) CardDatabase.deck.Clear();
+        
         InteractionManager.Instance.StartNewGame();
-
-        if (TableZone.Instance != null)
-        {
-            TableZone.Instance.ResetStats();
-        }
+        if (TableZone.Instance != null) TableZone.Instance.ResetStats();
     }
 
     public void QuitGame()

@@ -128,6 +128,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 938b47d7e4f40d34194203c6dc18d648, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HandLayoutFanner
-  gradosPorPaso: 15
+  spacing5Cartas: -70
+  spacing4Cartas: -252
+  spacing3Cartas: -446
+  spacing2Cartas: -650
+  gradosYPorPaso: 16
   zCentro: 30
   fuerzaCaidaZ: 30
+  invertirRotacionY: 1
+  fuerzaCaidaY: 0
+  gradosZPorPaso: 0

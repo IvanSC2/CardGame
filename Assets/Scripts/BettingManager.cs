@@ -18,10 +18,10 @@ public class BettingManager : MonoBehaviour
 
     [Header("Game State")]
     public int cardsInRound = 5;
-    public int p1Bet;
-    public int p2Bet;
-
-    private bool isP1Choosing = true;
+    
+    //VARIABLES DE CONTROL 
+    private int currentBetterIndex = 0; // A quién le toca apostar ahora mismo
+    private int betsPlaced = 0;         // Cuántas personas han apostado ya
 
     private void Awake()
     {
@@ -38,127 +38,180 @@ public class BettingManager : MonoBehaviour
     public void StartBettingPhase(int numCards)
     {
         cardsInRound = numCards;
-
         tableObject.SetActive(false);
         panelRoot.SetActive(true);
+        
         if (InteractionManager.Instance != null)
             InteractionManager.Instance.RefreshHandVisibility();
-        // --- Eleccion del sorteo ---
-        if (InteractionManager.Instance.currentMano == GameState.P1_TURN)
+
+        int totalPlayers = InteractionManager.Instance.totalPlayers;
+
+        // 1. Reseteamos el array maestro de apuestas a -1 (nadie ha apostado)
+        for (int i = 0; i < totalPlayers; i++)
         {
-            // Jugador 1 Apuesta Primero
-            isP1Choosing = true;
-            SetupUIForP1(false); // No es el último, no hay regla prohibida
+            InteractionManager.Instance.apuestas[i] = -1;
+        }
+        
+        betsPlaced = 0;
+
+        // 2. Quien empieza a apostar
+        currentBetterIndex = InteractionManager.Instance.manoMesaIndex;
+        
+        InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
+
+        // 3. Arrancamos apuestas
+        ProcessNextBet();
+    }
+
+    private void ProcessNextBet()
+    {
+        int totalPlayers = InteractionManager.Instance.totalPlayers;
+        
+        //Calculamos cuántos vivos hay en total en la mesa
+        int jugadoresVivosRonda = 0;
+        for (int i = 0; i < totalPlayers; i++)
+        {
+            if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivosRonda++;
+        }
+
+        // Ver si han aspostado todos los vivos
+        if (betsPlaced >= jugadoresVivosRonda)
+        {
+            StartCoroutine(EndBettingPhase());
+            return;
+        }
+
+        //  Si al que le toca está muerto, pasamos al siguiente automáticamente
+        while (InteractionManager.Instance.vidas[currentBetterIndex] <= 0)
+        {
+            currentBetterIndex = (currentBetterIndex + 1) % totalPlayers;
+        }
+
+        // Saber si el que va a apostar ahora es el último VIVO
+        bool isLastToBet = (betsPlaced == jugadoresVivosRonda - 1);
+
+        if (currentBetterIndex == 0)
+        {
+            SetupUIForP1(isLastToBet);
         }
         else
         {
-            // IA Apuesta Primero
-            isP1Choosing = false;
-            StartCoroutine(AIBetsFirstRoutine());
+            StartCoroutine(AIBetRoutine(currentBetterIndex, isLastToBet));
         }
     }
 
     private void SetupUIForP1(bool amILast)
     {
-        if (amILast)
-            titleText.text = $"IA APOSTÓ {p2Bet}. TU TURNO:";
+        if (betsPlaced > 0)
+        {
+            int lastBetter = (currentBetterIndex - 1 + InteractionManager.Instance.totalPlayers) % InteractionManager.Instance.totalPlayers;
+            int lastBet = InteractionManager.Instance.apuestas[lastBetter]; // Leemos del Manager
+            titleText.text = $"JUGADOR {lastBetter} APOSTÓ {lastBet}. TU TURNO:";
+        }
         else
+        {
             titleText.text = "¿Cuántas bazas ganarás?";
+        }
+            
         EnableButtons(true);
-        // Calcular la apuesta prohibida si somos los segundos en hablar
+        
+        //Apuesta prohibida
         int forbiddenBet = -1;
-        if (amILast) forbiddenBet = cardsInRound - p2Bet;
+        if (amILast) 
+        {
+            int sumBets = 0;
+            // Sumamos leyendo del array maestro
+            for(int i = 0; i < InteractionManager.Instance.totalPlayers; i++) 
+            {
+                if (InteractionManager.Instance.apuestas[i] >= 0)
+                    sumBets += InteractionManager.Instance.apuestas[i];
+            }
+            forbiddenBet = cardsInRound - sumBets;
+        }
+        
         for (int i = 0; i < betButtons.Length; i++)
         {
             if (i <= cardsInRound)
             {
                 betButtons[i].gameObject.SetActive(true);
-                // Si somos el último, no podemos pulsar el botón que sume el total de cartas
                 betButtons[i].interactable = (i != forbiddenBet);
             }
             else
             {
-                // Ocultar botones de apuestas mayores al número de cartas de la ronda
                 betButtons[i].gameObject.SetActive(false);
             }
         }
     }
 
-    // --- EL BOTÓN CLICADO POR TI ---
     private void OnBetClicked(int amount)
     {
-        if (isP1Choosing)
-        {
-            p1Bet = amount;
-            InteractionManager.Instance.SetInfoMessage($"P1 APUESTA: {p1Bet}");
+        // Guardar tu EL ARRAY
+        InteractionManager.Instance.apuestas[0] = amount;
+        InteractionManager.Instance.SetInfoMessage($"TÚ APUESTAS: {amount}");
 
-            isP1Choosing = false;
+        //Actualizamos los letreros visuales al instante
+        InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
 
-            // EN LUGAR DE MOSTRAR BOTONES PARA P2, LANZAMOS LA IA
-            DisableButtons(); // Que no toques nada
-            if (InteractionManager.Instance.currentMano == GameState.P1_TURN)
-            {
-                // P1 empezó, así que ahora le toca a la IA (Piensa y responde)
-                StartCoroutine(AIBetsSecondRoutine());
-            }
-            else
-            {
-                // La IA empezó, y P1 acaba de responder. Terminamos la fase.
-                StartCoroutine(EndBettingPhase());
-            }
-        }
+        DisableButtons(); 
+        
+        // Pasar al siguiente
+        betsPlaced++;
+        currentBetterIndex = (currentBetterIndex + 1) % InteractionManager.Instance.totalPlayers;
+        
+        ProcessNextBet();
     }
 
-    // --- PENSAMIENTO DE LA IA ---
-    IEnumerator AIBetsFirstRoutine()
+    // PENSAMIENTO UNIVERSAL DE LA IA
+    IEnumerator AIBetRoutine(int botIndex, bool isLast)
     {
-        titleText.text = "IA (MANO) ESTÁ PENSANDO...";
+        titleText.text = $"BOT {botIndex} ESTÁ PENSANDO...";
         DisableButtons();
         yield return new WaitForSeconds(1.5f);
 
-        if (cardsInRound == 1)
+        int sumBets = 0;
+        for(int i = 0; i < InteractionManager.Instance.totalPlayers; i++) 
         {
-            var p1Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP1);
-            Card p1VisibleCard = (p1Hand.Count > 0) ? p1Hand[0] : null;
-            p2Bet = AIController.Instance.CalculateBlindBet(p1VisibleCard, 0, false); // false = no es el último
-        }
-        else
-        {
-            var p2Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP2);
-            p2Bet = AIController.Instance.CalculateAIBet(p2Hand, 0, cardsInRound, false); // false = no es el último
+            if (InteractionManager.Instance.apuestas[i] >= 0)
+                sumBets += InteractionManager.Instance.apuestas[i];
         }
 
-        InteractionManager.Instance.SetInfoMessage($"IA APUESTA: {p2Bet}");
-        yield return new WaitForSeconds(1.0f);
-
-        // Ahora le damos el turno a P1 para que responda a la IA
-        isP1Choosing = true;
-        SetupUIForP1(true); // true = P1 es el último (Sufre Regla Prohibida)
-    }
-
-    // --- CORRUTINA 2: IA ES SEGUNDA (Responde al Jugador) ---
-    IEnumerator AIBetsSecondRoutine()
-    {
-        titleText.text = "IA ESTÁ PENSANDO...";
-        yield return new WaitForSeconds(1.5f);
+        int betAmount = 0;
 
         if (cardsInRound == 1)
         {
-            var p1Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP1);
-            Card p1VisibleCard = (p1Hand.Count > 0) ? p1Hand[0] : null;
-            p2Bet = AIController.Instance.CalculateBlindBet(p1VisibleCard, p1Bet, true); // true = es el último
+            // 1. MIRAMOS LAS CARTAS DE TODOS LOS RIVALES VIVOS EN LA MESA
+            List<Card> visibleCards = new List<Card>();
+            for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+            {
+                // Si el jugador está vivo, y no es el propio bot que está pensando
+                if (i != botIndex && InteractionManager.Instance.vidas[i] > 0)
+                {
+                    var hand = GetCardsFromGroup(InteractionManager.Instance.playerHands[i]);
+                    if (hand.Count > 0) visibleCards.Add(hand[0]);
+                }
+            }
+            
+            // 2. LE PASAMOS TODAS LAS CARTAS VISIBLES AL CEREBRO
+            betAmount = AIController.Instance.CalculateBlindBet(visibleCards, sumBets, isLast); 
         }
         else
         {
-            var p2Hand = GetCardsFromGroup(InteractionManager.Instance.handGroupP2);
-            p2Bet = AIController.Instance.CalculateAIBet(p2Hand, p1Bet, cardsInRound, true); // true = es el último
+            var botHand = GetCardsFromGroup(InteractionManager.Instance.playerHands[botIndex]);
+            betAmount = AIController.Instance.CalculateAIBet(botHand, sumBets, cardsInRound, isLast); 
         }
 
-        InteractionManager.Instance.SetInfoMessage($"IA APUESTA: {p2Bet}");
+        InteractionManager.Instance.apuestas[botIndex] = betAmount;
+        InteractionManager.Instance.SetInfoMessage($"BOT {botIndex} APUESTA: {betAmount}");
+        InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
 
         yield return new WaitForSeconds(1.0f);
-        StartCoroutine(EndBettingPhase());
+
+        betsPlaced++;
+        currentBetterIndex = (currentBetterIndex + 1) % InteractionManager.Instance.totalPlayers;
+        
+        ProcessNextBet();
     }
+    
     IEnumerator EndBettingPhase()
     {
         panelRoot.SetActive(false);
@@ -167,15 +220,14 @@ public class BettingManager : MonoBehaviour
         if (cardsInRound == 1)
             InteractionManager.Instance.ResolveBlindRoundImmediate();
         else
-            InteractionManager.Instance.InitializeGame(); // Inicia la fase de jugar cartas
+            InteractionManager.Instance.InitializeGame();
 
         yield return null;
     }
-    // Helpers
+    
     private void EnableButtons(bool enable) { foreach (var b in betButtons) b.gameObject.SetActive(enable); }
     private void DisableButtons() { foreach (var b in betButtons) b.gameObject.SetActive(false); }
 
-    // Método auxiliar para convertir UICards visuales a Datos Card
     private List<Card> GetCardsFromGroup(CanvasGroup group)
     {
         List<Card> list = new List<Card>();

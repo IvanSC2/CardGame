@@ -4,7 +4,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine.SceneManagement;
 
-public enum GameState {P1_TURN, P2_TURN, WAITING}
+public enum GameState {PLAYER_TURN, AI_TURN, WAITING}
 
 public class InteractionManager : MonoBehaviour
 {
@@ -13,52 +13,51 @@ public class InteractionManager : MonoBehaviour
 
     [Header("UI Feedback")]
     public TextMeshProUGUI infoLineText;
+    
     [Header("Debug")]
-    public bool isDebugAIVisible = false; // VARIABLE DE TOGGLE
+    public bool isDebugAIVisible = false; 
+    
     [Header("Control de Rondas")]
     public int currentRoundCards = 5;
     private int roundDelta = -1;
 
-    [Header("Estadísticas de Jugador")]
-    public int p1Vidas = 3;
-    public int p2Vidas = 3;
-    [Header("Control de Turnos")]
-    public GameState currentMano; 
-    [Header("Referencias de Turno")]
-    public CanvasGroup handGroupP1; 
-    public CanvasGroup handGroupP2; 
+    // --- ¡NUEVO SISTEMA DE ARRAYS MULTIJUGADOR! ---
+    [Header("Estadísticas de Jugadores (Ronda Actual)")]
+    public int[] vidas;
+    public int[] apuestas;
+    public int[] bazasGanadas;
 
-    [Header("Estadísticas Globales")]
+    [Header("Control de Turnos")]
+    public int currentTurnIndex=0;
+    public int manoMesaIndex=0; 
+    public int totalPlayers=0;
+    public GameState currentState; 
+
+    [Header("Sillas")]
+    public List<CanvasGroup> playerHands = new List<CanvasGroup>();
+
+    // ARRAYS PARA LAS ESTADÍSTICAS GLOBALES
+    [Header("Estadísticas Globales (Fin de Partida)")]
     public int rondasJugadasTotales = 0;
-    public int p1ApuestasAcertadas = 0;
-    public int p2ApuestasAcertadas = 0;
-    public int p1BazasTotales = 0;
-    public int p2BazasTotales = 0;
+    public int[] apuestasAcertadasTotales;
+    public int[] bazasTotales; 
     
-    public GameState currentState;
     public UICard SelectedCard { get; private set; }
     public bool isPaused = false;
 
     // --- Helpers de Mensajes ---
     public void SetInfoMessage(string message)
     {
-        if (infoLineText != null)
-        {
-            infoLineText.text = message;
-        }
+        if (infoLineText != null) infoLineText.text = message;
         Debug.Log("[INFO-UI]: " + message);
     }
 
    private void Awake()
     {
-        // 1. Configuración propia del Singleton y estado
         if (Instance != null && Instance != this) Destroy(this.gameObject);
         else Instance = this;
         currentState = GameState.WAITING;
         
-        // 2. Sorteo del jugador que empieza
-        int sorteo = Random.Range(0,2);
-        currentMano= (sorteo ==0)? GameState.P1_TURN : GameState.P2_TURN;
         string[] nombresDificultad = { "Pacifico", "Normal", "Difícil", "Experto", "Imposible" };
         int numBots = GameConfig.nPlayers; 
         int difIndex = GameConfig.difficulty;
@@ -69,19 +68,41 @@ public class InteractionManager : MonoBehaviour
 
     private void Start()
     {
-        // 3. Hablamos con otros scripts una vez que TODOS están despiertos
         int numBots = GameConfig.nPlayers; 
         
         if (TableManagerLayout.Instance != null)
         {
             TableManagerLayout.Instance.GenerarMesa(numBots + 1);
 
-            // Inmediatamente después, enganchamos las manos buenas
             if (TableManagerLayout.Instance.manosActivas.Count >= 2)
             {
-                handGroupP1 = TableManagerLayout.Instance.manosActivas[0];
-                handGroupP2 = TableManagerLayout.Instance.manosActivas[1];
-                Debug.Log("[SYSTEM] Manos dinámicas vinculadas con éxito. Ignorando molde.");
+                playerHands = new List<CanvasGroup>(TableManagerLayout.Instance.manosActivas);
+                totalPlayers = playerHands.Count;
+
+                // --- INICIALIZAMOS LOS ARRAYS DE DATOS ---
+                vidas = new int[totalPlayers];
+                apuestas = new int[totalPlayers];
+                bazasGanadas = new int[totalPlayers];
+                apuestasAcertadasTotales = new int[totalPlayers];
+                bazasTotales = new int[totalPlayers];
+
+                // Rellenamos datos base: 3 vidas, apuestas a -1 (nulas), 0 bazas
+                for (int i = 0; i < totalPlayers; i++)
+                {
+                    vidas[i] = 3; 
+                    apuestas[i] = -1;
+                    bazasGanadas[i] = 0;
+                    apuestasAcertadasTotales[i] = 0;
+                    bazasTotales[i] = 0;
+                }
+
+                // Sorteo de quién empieza la partida
+                manoMesaIndex = Random.Range(0, totalPlayers);
+                currentTurnIndex = manoMesaIndex;
+                currentState = (currentTurnIndex == 0) ? GameState.PLAYER_TURN : GameState.AI_TURN;
+                
+                // Actualizamos la UI inicial
+                ActualizarTodosLosPerfilesUI();
             }
         }
         else
@@ -89,22 +110,30 @@ public class InteractionManager : MonoBehaviour
             Debug.LogError("Error: TableManagerLayout no encontrado al arrancar.");
         }
     }
-    //Quita la pausa y asigna el turno
-    public void InitializeGame()
+
+    // UIPerfiles
+    public void ActualizarTodosLosPerfilesUI()
     {
-       
-        isPaused = false;
-        currentState = currentMano;
-        UpdateVisualStates();
-        RefreshHandVisibility();
-        //Si le toca a la IA Activa su corrutina
-        if (currentState == GameState.P2_TURN)
+        for (int i = 0; i < totalPlayers; i++)
         {
-            StartCoroutine(AITurnRoutine());
+            if (TableManagerLayout.Instance.perfilesActivos.Count > i)
+            {
+                string nombre = (i == 0) ? "TÚ" : $"BOT {i}";
+                TableManagerLayout.Instance.perfilesActivos[i].ActualizarPerfil(nombre, vidas[i], bazasGanadas[i], apuestas[i]);
+            }
         }
     }
 
-    // --- LÓGICA DE TOGGLE ---
+    public void InitializeGame()
+    {
+        isPaused = false;
+        currentTurnIndex = manoMesaIndex;
+        currentState = (currentTurnIndex == 0) ? GameState.PLAYER_TURN : GameState.AI_TURN;
+        UpdateVisualStates();
+        RefreshHandVisibility();
+        if (currentState == GameState.AI_TURN) StartCoroutine(AITurnRoutine());
+    }
+
     public void ToggleAIDebugView()
     {
         isDebugAIVisible = !isDebugAIVisible;
@@ -113,109 +142,107 @@ public class InteractionManager : MonoBehaviour
 
     public void RefreshHandVisibility()
     {
-        // CASO ESPECIAL: RONDA DE 1 CARTA (CIEGA)
+        if (playerHands.Count == 0) return;
+        
         if (currentRoundCards == 1)
         {
-            // P1 (Tú): NO ves tu carta (Boca abajo)
-            foreach (Transform t in handGroupP1.transform)
+            foreach (Transform t in playerHands[0].transform)
                 if (t.GetComponent<UICard>()) t.GetComponent<UICard>().SetFaceUp(false);
 
-            // P2 (IA): SÍ ves su carta (Boca arriba) para tener info
-            foreach (Transform t in handGroupP2.transform)
-                if (t.GetComponent<UICard>()) t.GetComponent<UICard>().SetFaceUp(true);
-                
-            return; // Salimos aquí, ignorando el resto
+            for (int i = 1; i < playerHands.Count; i++)
+            {
+                foreach (Transform t in playerHands[i].transform)
+                    if (t.GetComponent<UICard>()) t.GetComponent<UICard>().SetFaceUp(true);
+            }
+            return;
         }
 
-        // --- LÓGICA NORMAL (Rondas 5, 4, 3, 2) ---
-        foreach (Transform t in handGroupP1.transform) 
+        foreach (Transform t in playerHands[0].transform) 
             if(t.GetComponent<UICard>()) t.GetComponent<UICard>().SetFaceUp(true);
 
-        foreach (Transform t in handGroupP2.transform) 
+        for (int i = 1; i < playerHands.Count; i++)
         {
-            UICard card = t.GetComponent<UICard>();
-            if (card != null) card.SetFaceUp(isDebugAIVisible);
+            foreach (Transform t in playerHands[i].transform) 
+            {
+                UICard card = t.GetComponent<UICard>();
+                if (card != null) card.SetFaceUp(isDebugAIVisible);
+            }
         }
     }
 
-    // =================================================================================
-    // 🧠 LÓGICA DE TURNOS E IA
-    // =================================================================================
-
     public void ChangeTurn()
     {
-        // Alternar Turno
-        if (currentState == GameState.P1_TURN) currentState = GameState.P2_TURN;
-        else if (currentState == GameState.P2_TURN) currentState = GameState.P1_TURN;
+        int limitador = 0;
+        do 
+        {
+            currentTurnIndex = (currentTurnIndex + 1) % totalPlayers;
+            limitador++;
+            if (limitador > totalPlayers) break; // Seguro anti-cuelgues
+        } 
+        while (vidas[currentTurnIndex] <= 0); 
+
+        currentState = (currentTurnIndex == 0) ? GameState.PLAYER_TURN : GameState.AI_TURN;
         
         UpdateVisualStates();
         ClearSelection();
 
-        // >>> DISPARADOR DE LA IA <<<
-        if (currentState == GameState.P2_TURN)
-        {
-            StartCoroutine(AITurnRoutine());
-        }
+        if (currentState == GameState.AI_TURN) StartCoroutine(AITurnRoutine());
     }
-    // --- NUEVO: Fuerza el turno para el ganador de la baza ---
-    public void SetTurn(GameState newTurn)
+
+    public void SetTurn(int newPlayerIndex)
     {
-        currentState = newTurn;
+        currentTurnIndex = newPlayerIndex;
+        currentState = (currentTurnIndex == 0) ? GameState.PLAYER_TURN : GameState.AI_TURN;
         UpdateVisualStates();
         ClearSelection();
 
-        // Si el ganador fue la IA, le decimos que empiece a pensar su jugada
-        if (currentState == GameState.P2_TURN)
-        {
-            StartCoroutine(AITurnRoutine());
-        }
+        if (currentState == GameState.AI_TURN) StartCoroutine(AITurnRoutine());
     }
-    // Corrutina que controla el pensamiento y acción de la IA
+
     IEnumerator AITurnRoutine()
     {
-        Debug.Log("🤖 IA: Pensando jugada...");
-        yield return new WaitForSeconds(1.5f); // Pequeña pausa para dar realismo
+        Debug.Log($"🤖 IA {currentTurnIndex}: Pensando jugada...");
+        yield return new WaitForSeconds(1.5f); 
 
-        // 1. Obtener la carta que hay en la mesa (si la hay)
-        Card cardOnTable = null;
-        if (TableZone.Instance != null && TableZone.Instance.transform.childCount > 0)
+        // 1. LEEMOS TODAS LAS CARTAS DE LA MESA ACTUALMENTE
+        List<Card> cardsOnTable = new List<Card>();
+        if (TableZone.Instance != null)
         {
-            // Asumimos que el primer hijo de la mesa es la carta del rival
-            cardOnTable = TableZone.Instance.transform.GetChild(0).GetComponent<UICard>().cardData;
+            foreach (Transform t in TableZone.Instance.transform)
+            {
+                UICard c = t.GetComponent<UICard>();
+                if (c != null) cardsOnTable.Add(c.cardData);
+            }
         }
 
-        // 2. Obtener la mano de la IA (Lista de componentes UICard)
         List<UICard> aiHand = new List<UICard>();
-        foreach (Transform t in handGroupP2.transform)
+        foreach (Transform t in playerHands[currentTurnIndex].transform)
         {
             UICard c = t.GetComponent<UICard>();
             if (c != null) aiHand.Add(c);
         }
 
-        // 3. Consultar al Cerebro (AIController)
-        int currentWins = TableZone.Instance.p2Wins;
-        int targetBet = BettingManager.Instance.p2Bet;
+        int currentWins = bazasGanadas[currentTurnIndex];
+        int targetBet = apuestas[currentTurnIndex]; 
 
-        UICard cardToPlay = AIController.Instance.ChooseCardToPlay(aiHand, cardOnTable, currentWins, targetBet);
+        // 2. LE PASAMOS LA LISTA ENTERA DE LA MESA AL CEREBRO
+        UICard cardToPlay = AIController.Instance.ChooseCardToPlay(aiHand, cardsOnTable, currentWins, targetBet);
 
-        // 4. Ejecutar la jugada simulando clicks
         if (cardToPlay != null)
         {
-            Debug.Log($"🤖 IA: Juega {cardToPlay.cardData.rank} de {cardToPlay.cardData.suit}");
+            Debug.Log($"🤖 IA {currentTurnIndex}: Juega {cardToPlay.cardData.rank} de {cardToPlay.cardData.suit}");
             cardToPlay.SetFaceUp(true);
-            // A) Seleccionar la carta
             SelectCard(cardToPlay); 
             
-            yield return new WaitForSeconds(0.5f); // Breve pausa visual
-
-            // B) Jugarla en la mesa
+            yield return new WaitForSeconds(0.5f); 
             TableZone.Instance.OnPointerClick(null);
         }
         else
         {
-            Debug.LogError("IA Error: No se encontró carta válida para jugar.");
+            Debug.LogError($"IA {currentTurnIndex} Error: No se encontró carta válida para jugar.");
         }
     }
+
     private int GetSuitValue(string suit)
     {
         if (suit == "Diamantes") return 4;
@@ -223,52 +250,36 @@ public class InteractionManager : MonoBehaviour
         if (suit == "Picas") return 2;
         return 1;
     }
-    // =================================================================================
-    // 🃏 LÓGICA DE SELECCIÓN DE CARTAS
-    // =================================================================================
 
     public void SelectCard(UICard card)
     {
-        // 1. Verificación de pertenencia y turno
-        bool isP1Card = card.transform.parent == handGroupP1.transform;
-        bool isP2Card = card.transform.parent == handGroupP2.transform;
-
-        bool canSelect = (currentState == GameState.P1_TURN && isP1Card) || 
-                        (currentState == GameState.P2_TURN && isP2Card); // Permitimos P2 para que la IA pueda seleccionarse a sí misma
+        bool isCurrentPlayerCard = card.transform.parent == playerHands[currentTurnIndex].transform;
+        bool canSelect = (currentState == GameState.PLAYER_TURN && currentTurnIndex == 0 && isCurrentPlayerCard) || 
+                         (currentState == GameState.AI_TURN && isCurrentPlayerCard); 
 
         if (canSelect)
         {
-            // CASO 1: Deseleccionar (Toggle)
             if (SelectedCard == card)
             {
                 ClearSelection();
                 return; 
             }
 
-            // CASO 2: Limpiar anterior
-            if (SelectedCard != null)
-            {
-                SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
-            }
+            if (SelectedCard != null) SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
 
-            // CASO 3: Nueva selección
             SelectedCard = card;
             SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.yellow;
         }
         else
         {
-            // Solo mostramos log si es un humano intentando hacer trampa
-            if(currentState == GameState.P1_TURN && isP2Card) 
+            if(currentState == GameState.PLAYER_TURN && !isCurrentPlayerCard) 
                 Debug.Log("No es tu turno o no es tu carta.");
         }
     }
 
     public void ClearSelection()
     {
-        if (SelectedCard != null)
-        {
-            SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
-        }
+        if (SelectedCard != null) SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
         SelectedCard = null;
     }
 
@@ -277,56 +288,41 @@ public class InteractionManager : MonoBehaviour
         return SelectedCard != null;
     }
 
-    // =================================================================================
-    // ⚙️ GESTIÓN DE ESTADO (GAME LOOP)
-    // =================================================================================
     public void StartNewGame()
-{
-    // Esto averigua cómo se llama la escena en la que estás ahora mismo, y la vuelve a cargar desde cero.
-    SceneManager.LoadScene(SceneManager.GetActiveScene().name);
-}
-    /*public void ResetGameTotal()
     {
-        Debug.Log("🔄 REINICIANDO SISTEMA DE JUEGO...");
-
-        p1Vidas = 3;
-        p2Vidas = 3;
-
-        currentRoundCards = 5;
-        roundDelta = -1;
-        //Sorteo
-        int sorteo= Random.Range(0,2);
-        currentMano = (sorteo ==0) ? GameState.P1_TURN : GameState.P2_TURN;
-        string nomMano= (currentMano == GameState.P1_TURN) ? "JUGADOR 1" : "JUGADOR 2";
-        SetInfoMessage($"Sorteo inicial: EMPIEZA {nomMano}");
-
-        CardDatabase.GenerateDeck(); 
-        ClearSelection();
-
-        Debug.Log("✅ JUEGO NUEVO LISTO.");
+        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
     }
-*/
+
     public void AdvanceRoundSequence()
     {
         currentRoundCards += roundDelta;
 
-        // CAMBIO: Ahora el límite inferior es 1, no 2
         if(currentRoundCards <= 1)
         {
             currentRoundCards = 1;
-            roundDelta = 1; // La próxima subirá a 2
+            roundDelta = 1; 
         }
         else if(currentRoundCards >= 5)
         {
             currentRoundCards = 5;
             roundDelta = -1;
         }
-       currentMano = (currentMano == GameState.P1_TURN) ? GameState.P2_TURN : GameState.P1_TURN;
+
+        int limitador = 0;
+        do 
+        {
+            manoMesaIndex = (manoMesaIndex + 1) % totalPlayers;
+            limitador++;
+            if (limitador > totalPlayers) break; // Seguro anti-cuelgues
+        } 
+        while (vidas[manoMesaIndex] <= 0);
         
-        string tipoRonda = (currentRoundCards == 1) ? "RONDA CIEGA (INDIAN POKER)" : "NORMAL";
-        Debug.Log($"<color=orange>PRÓXIMA RONDA: {currentRoundCards} CARTAS - {tipoRonda}</color>");
+        currentTurnIndex = manoMesaIndex;
+        currentState = (currentTurnIndex == 0) ? GameState.PLAYER_TURN : GameState.AI_TURN;
+        
+        Debug.Log($"<color=orange>PRÓXIMA RONDA: {currentRoundCards} CARTAS</color>");
     }
-    // 3. NUEVO: RESOLUCIÓN EXPRESS (Sin jugar cartas)
+
     public void ResolveBlindRoundImmediate()
     {
         StartCoroutine(BlindRoundRoutine());
@@ -337,66 +333,71 @@ public class InteractionManager : MonoBehaviour
         yield return new WaitForSeconds(1.0f);
         SetInfoMessage("¡RESOLVIENDO RONDA CIEGA!");
         
-        // 1. Revelamos TU carta (P1) para ver quién gana
-        foreach (Transform t in handGroupP1.transform)
-            if (t.GetComponent<UICard>()) t.GetComponent<UICard>().SetFaceUp(true);
-
-        yield return new WaitForSeconds(1.5f); // Suspense...
-
-        // 2. Comparamos valores directamente desde la mano
-        // (Asumimos que solo hay 1 carta por mano)
-        UICard p1Card = handGroupP1.transform.GetChild(0).GetComponent<UICard>();
-        UICard p2Card = handGroupP2.transform.GetChild(0).GetComponent<UICard>();
-
-        // Usamos la lógica de TableZone para calcular puntos (aunque no estén en la mesa)
-        // Ojo: Necesitamos acceder a la lógica de "quién gana".
-        // Para simplificar, lo calculamos aquí rápido:
-        int score1 = (p1Card.cardData.value * 10) + GetSuitValue(p1Card.cardData.suit);
-        int score2 = (p2Card.cardData.value * 10) + GetSuitValue(p2Card.cardData.suit);
-
-        // 3. Asignar victorias
-        if (score1 > score2) 
+        foreach (CanvasGroup hand in playerHands)
         {
-            TableZone.Instance.p1Wins = 1;
-            SetInfoMessage("¡P1 TIENE LA CARTA MAS ALTA!");
-        }
-        else 
-        {
-            TableZone.Instance.p2Wins = 1;
-            SetInfoMessage("¡P2 TIENE LA CARTA MAS ALTA!");
+            if (hand.transform.childCount > 0)
+            {
+                UICard c = hand.transform.GetChild(0).GetComponent<UICard>();
+                if (c != null) c.SetFaceUp(true);
+            }
         }
 
-        TableZone.Instance.bazasJugadas = 1; // Forzamos que la ronda "acabó"
+        yield return new WaitForSeconds(1.5f); 
+
+        int maxScore = -1;
+        int winnerIndex = -1;
+        List<UICard> cartasJugadas = new List<UICard>(); 
+
+        for (int i = 0; i < playerHands.Count; i++)
+        {
+            if (playerHands[i].transform.childCount > 0)
+            {
+                UICard card = playerHands[i].transform.GetChild(0).GetComponent<UICard>();
+                cartasJugadas.Add(card);
+
+                int score = (card.cardData.value * 10) + GetSuitValue(card.cardData.suit);
+                
+                if (score > maxScore)
+                {
+                    maxScore = score;
+                    winnerIndex = i;
+                }
+            }
+        }
+
+        if (winnerIndex != -1)
+        {
+            bazasGanadas[winnerIndex]++; 
+            
+            if (winnerIndex == 0) SetInfoMessage("¡TÚ TIENES LA CARTA MÁS ALTA!");
+            else SetInfoMessage($"¡EL JUGADOR {winnerIndex} TIENE LA CARTA MÁS ALTA!");
+            
+            // Actualizamos la UI para que se vea la baza que acaba de ganar
+            ActualizarTodosLosPerfilesUI(); 
+        }
+
+        TableZone.Instance.bazasJugadas = 1; 
         
         yield return new WaitForSeconds(1.5f);
 
-        // 4. Llamar a la limpieza final de TableZone
-        // (Usamos un truco: llamamos a CheckWinner para que él active el fin de ronda)
-        // Pero como CheckWinner espera cartas EN LA MESA, mejor llamamos directamente a ResolverApuestas
-        // Sin embargo, TableZone.ResolveApuestas es privado. 
-        // TRUCO: Vamos a mover las cartas a la mesa visualmente y llamar a CheckWinner.
+        foreach (UICard c in cartasJugadas) c.transform.SetParent(TableZone.Instance.transform);
         
-        p1Card.transform.SetParent(TableZone.Instance.transform);
-        p2Card.transform.SetParent(TableZone.Instance.transform);
-        
-        // Al ponerlas en la mesa, TableZone detectará 2 hijos... pero necesitamos disparar la lógica.
-        // Llamamos manualmente a CheckWinner modificando TableZone o simplemente dejando que TableZone
-        // maneje el final si lo hacemos público. 
-        
-        // OPCIÓN MÁS LIMPIA: Llamamos a una función pública en TableZone que creemos ahora.
         TableZone.Instance.ForceEndRoundAnalysis();
     }
+
     public void UpdateVisualStates()
     {
-        if (isPaused)
+        if (isPaused || playerHands.Count == 0)
         {
-            SetGroupState(handGroupP1, false, 0.5f);
-            SetGroupState(handGroupP2, false, 0.5f);
+            foreach (var hand in playerHands) SetGroupState(hand, false, 0.5f);
             return;
         }
 
-        SetGroupState(handGroupP1, currentState == GameState.P1_TURN, currentState == GameState.P1_TURN ? 1f : 0.5f);
-        SetGroupState(handGroupP2, currentState == GameState.P2_TURN, currentState == GameState.P2_TURN ? 1f : 0.5f);
+        for (int i = 0; i < playerHands.Count; i++)
+        {
+            bool isHisTurn = (i == currentTurnIndex);
+            SetGroupState(playerHands[i], isHisTurn, isHisTurn ? 1f : 0.5f);
+        }
     }
 
     private void SetGroupState(CanvasGroup group, bool active, float alpha)
@@ -405,11 +406,8 @@ public class InteractionManager : MonoBehaviour
         {
             group.interactable = active;
             group.blocksRaycasts = active;
-            
-            // Fondo opaco siempre
             group.alpha = 1f; 
 
-            // Cartas semitransparentes si no es su turno
             foreach (Transform childCard in group.transform)
             {
                 CanvasGroup cardGroup = childCard.GetComponent<CanvasGroup>();
