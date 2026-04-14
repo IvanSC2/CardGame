@@ -1,10 +1,13 @@
 using UnityEngine;
 using System.Collections.Generic;
+using Unity.Netcode; // ¡NUEVO! Necesario para saber quién somos en la red
 
 public class TableManagerLayout : MonoBehaviour
 {
     public static TableManagerLayout Instance;
-    int numBots = GameConfig.nPlayers;
+    
+    // Dejamos esto como base, pero en multijugador real esto nos lo dirá el Host
+    int numBots = GameConfig.nPlayers; 
 
     [Header("Tu Molde (Prefab)")]
     public GameObject handAreaPrefab;
@@ -12,19 +15,17 @@ public class TableManagerLayout : MonoBehaviour
     [Header("Perfiles (UI)")]
     public GameObject playerProfilePrefab;
     
-    [Tooltip("Separación extra desde el borde de la mesa (Solo se usa si no hay Override)")]
+    [Tooltip("Separación extra desde el borde de la mesa")]
     public float radioExtraPerfil = 120f; 
     
     public List<PlayerProfileUI> perfilesActivos = new List<PlayerProfileUI>();
 
-    [Header("Contenedor (Vacío dentro de CoTable)")]
+    [Header("Contenedor")]
     public Transform contenedorHandAreas;
 
     [Header("Geometría de tu Mesa")]
     public float radioX = 600f;
     public float radioY = 420f;
-    
-    [Tooltip("Usa este valor para rotar los perfiles de frente (-50f)")]
     public float rotacionX_TodaLaMesa = -50f;
 
     [Header("Conexión con tu script de Escala")]
@@ -38,20 +39,23 @@ public class TableManagerLayout : MonoBehaviour
         if (Instance == null) Instance = this;
     }
 
-    private void Start()
-    {
-        //GenerarMesa(numBots+1);
-    }
-
     public void GenerarMesa(int numJugadores)
     {
-        // 1. Limpiamos solo los HandAreas y Perfiles
+        // 1. Limpieza inicial
         foreach (Transform child in contenedorHandAreas) Destroy(child.gameObject);
         manosActivas.Clear();
         perfilesActivos.Clear(); 
 
         if (perspectiveManager != null)
             perspectiveManager.handAreas.Clear();
+
+        // --- ¡NUEVA LÓGICA DE RED! ---
+        // Preguntamos al NetworkManager cuál es nuestro número de jugador
+        int localId = 0;
+        if (NetworkManager.Singleton != null && (NetworkManager.Singleton.IsClient || NetworkManager.Singleton.IsHost))
+        {
+            localId = (int)NetworkManager.Singleton.LocalClientId;
+        }
 
         // 2. MESA VIRTUAL: Calculamos asientos extra
         int asientosVirtuales = numJugadores;
@@ -60,16 +64,19 @@ public class TableManagerLayout : MonoBehaviour
 
         float anguloPaso = 360f / asientosVirtuales;
         
-        GameObject manoP1 = null;
         GameObject[] manosGeneradas = new GameObject[numJugadores];
 
         for (int i = 0; i < numJugadores; i++)
         {
-            int indexAsiento = i;
+            // EL TRUCO MAGICO: Desplazamos el índice visual basándonos en tu ID local
+            int visualIndex = (i - localId + numJugadores) % numJugadores;
             
-            if ((numJugadores >= 5) && i > 0) 
+            // A partir de aquí, para dibujar sillas y posiciones usamos "visualIndex"
+            int indexAsiento = visualIndex;
+            
+            if ((numJugadores >= 5) && visualIndex > 0) 
             {
-                indexAsiento = i + 1; 
+                indexAsiento = visualIndex + 1; 
             }
 
             float anguloGrados = (indexAsiento * anguloPaso) - 90f;
@@ -77,10 +84,9 @@ public class TableManagerLayout : MonoBehaviour
             float radioX_Usado = radioX;
             float radioY_Usado = radioY;
 
-            if (i != 0) 
+            if (visualIndex != 0) 
             {
                 float multiplicadorDistancia = 1f;
-
                 if (numJugadores == 2) multiplicadorDistancia = 0.9f;      
                 else if (numJugadores == 3) multiplicadorDistancia = 1.0f;  
                 else if (numJugadores == 4) multiplicadorDistancia = 1.15f; 
@@ -98,39 +104,41 @@ public class TableManagerLayout : MonoBehaviour
             if (handAreaPrefab != null)
             {
                 GameObject handArea = Instantiate(handAreaPrefab, contenedorHandAreas);
-                handArea.name = $"HandArea_P{i + 1}";
-                if (i == 0) manoP1 = handArea;
+                // ¡OJO! El nombre real de la mano usa la 'i' para que la lógica de red siga funcionando
+                handArea.name = $"HandArea_JUG{i}";
 
                 RectTransform rtHand = handArea.GetComponent<RectTransform>();
                 rtHand.anchoredPosition = new Vector2(posX, posY);
 
                 Vector3 rotacionFinal = Vector3.zero;
 
+                // Las rotaciones visuales también usan visualIndex
                 if (numJugadores == 2)
                 {
-                    if (i == 0) rotacionFinal = new Vector3(-45f, 0f, 0f);       
-                    if (i == 1) rotacionFinal = new Vector3(-45f, 0f, 0f);       
+                    if (visualIndex == 0) rotacionFinal = new Vector3(-45f, 0f, 0f);       
+                    if (visualIndex == 1) rotacionFinal = new Vector3(-45f, 0f, 0f);       
                 }
                 else if (numJugadores == 3)
                 {
-                    if (i == 0) rotacionFinal = new Vector3(-45f, 0f, 0f);       
-                    if (i == 1) rotacionFinal = new Vector3(45f, -90f, -90f);    
-                    if (i == 2) rotacionFinal = new Vector3(135f, -90f, -90f);   
+                    if (visualIndex == 0) rotacionFinal = new Vector3(-45f, 0f, 0f);       
+                    if (visualIndex == 1) rotacionFinal = new Vector3(45f, -90f, -90f);    
+                    if (visualIndex == 2) rotacionFinal = new Vector3(135f, -90f, -90f);   
                 }
                 else if (numJugadores == 4)
                 {
-                    if (i == 0) rotacionFinal = new Vector3(-45f, 0f, 0f);       
-                    if (i == 1) rotacionFinal = new Vector3(0f, -90f, -90f);     
-                    if (i == 2) rotacionFinal = new Vector3(-45f, 0f, 0f);       
-                    if (i == 3) rotacionFinal = new Vector3(0f, 90f, 90f);       
+                    if (visualIndex == 0) rotacionFinal = new Vector3(-45f, 0f, 0f);       
+                    if (visualIndex == 1) rotacionFinal = new Vector3(0f, -90f, -90f);     
+                    if (visualIndex == 2) rotacionFinal = new Vector3(-45f, 0f, 0f);       
+                    if (visualIndex == 3) rotacionFinal = new Vector3(0f, 90f, 90f);       
                 }
                 else if (numJugadores >= 5)
                 {
-                    if (i == 0) rotacionFinal = new Vector3(-45f, 0f, 0f); 
+                    if (visualIndex == 0) rotacionFinal = new Vector3(-45f, 0f, 0f); 
                     else rotacionFinal = new Vector3(anguloGrados, -90f, -90f); 
                 }
 
                 rtHand.localEulerAngles = rotacionFinal;
+                // Guardamos en el array real usando 'i'
                 manosGeneradas[i] = handArea;
              
                 if (perspectiveManager != null) perspectiveManager.handAreas.Add(rtHand);
@@ -143,53 +151,37 @@ public class TableManagerLayout : MonoBehaviour
             if (playerProfilePrefab != null)
             {
                 GameObject perfilObj = Instantiate(playerProfilePrefab, contenedorHandAreas);
-                perfilObj.name = $"Profile_P{i + 1}";
+                perfilObj.name = $"Profile_JUG{i}";
                 
                 RectTransform rtPerfil = perfilObj.GetComponent<RectTransform>();
                 
-                // 1. MATEMÁTICA POR DEFECTO (Se usará solo como base por si acaso)
                 float radioX_Perfil = radioX_Usado + radioExtraPerfil;
                 float radioY_Perfil = radioY_Usado + radioExtraPerfil;
                 float perfilPosX = radioX_Perfil * Mathf.Cos(anguloRadianes);
                 float perfilPosY = radioY_Perfil * Mathf.Sin(anguloRadianes);
 
-                // 2. OVERRIDE MANUAL 
-                if (i == 0) 
+                // 2. OVERRIDE MANUAL usando visualIndex
+                if (visualIndex == 0) 
                 {
-                    // TÚ (P1)
+                    // TÚ (Siempre serás el índice visual 0, sin importar tu ID de red)
                     perfilPosX = -1000f; 
                     perfilPosY = -500f; 
                     rtPerfil.localScale = new Vector3(1.5f, 1.5f, 1.5f);
                 }
                 else if (numJugadores == 2)
                 {
-                    if (i == 1) { perfilPosX = 0f; perfilPosY = 1500f; } // P2
+                    if (visualIndex == 1) { perfilPosX = 0f; perfilPosY = 1500f; } 
                 }
                 else if (numJugadores == 3)
                 {
-                    if (i == 1) { perfilPosX = 1100f; perfilPosY = 1100f; } // P2 
-                    else if (i == 2) { perfilPosX = -1100f; perfilPosY = 1100f; } // P3 
+                    if (visualIndex == 1) { perfilPosX = 1100f; perfilPosY = 1100f; }  
+                    else if (visualIndex == 2) { perfilPosX = -1100f; perfilPosY = 1100f; } 
                 }
                 else if (numJugadores == 4)
                 {
-                    if (i == 1) { perfilPosX = 1300f; perfilPosY = 400f; } // P2
-                    else if (i == 2) { perfilPosX = 0f; perfilPosY = 1700f; } // P3
-                    else if (i == 3) { perfilPosX = -1300f; perfilPosY = 400f; } // P4
-                }
-                else if (numJugadores == 5)
-                {
-                    if (i == 1) { perfilPosX = 1300f; perfilPosY = 600f; } // P2
-                    else if (i == 2) { perfilPosX = 550f; perfilPosY = 1600f; } // P3 
-                    else if (i == 3) { perfilPosX = -550f; perfilPosY = 1600f; } // P4 
-                    else if (i == 4) { perfilPosX = -1300f; perfilPosY = 600f; } // P5
-                }
-                else if (numJugadores == 6)
-                {
-                    if (i == 1) { perfilPosX = 1300f; perfilPosY = 500f; } // P2
-                    else if (i == 2) { perfilPosX = 1000f; perfilPosY = 1300f; } // P3 
-                    else if (i == 3) { perfilPosX = 0f; perfilPosY = 1750f; } // P4 
-                    else if (i == 4) { perfilPosX = -1000f; perfilPosY = 1300f; } // P5 
-                    else if (i == 5) { perfilPosX = -1300f; perfilPosY = 500f; } // P6
+                    if (visualIndex == 1) { perfilPosX = 1300f; perfilPosY = 400f; } 
+                    else if (visualIndex == 2) { perfilPosX = 0f; perfilPosY = 1700f; } 
+                    else if (visualIndex == 3) { perfilPosX = -1300f; perfilPosY = 400f; } 
                 }
                 
                 rtPerfil.anchoredPosition = new Vector2(perfilPosX, perfilPosY);
@@ -199,39 +191,20 @@ public class TableManagerLayout : MonoBehaviour
                 if (profileUI != null)
                 {
                     perfilesActivos.Add(profileUI);
-                    string nombre = (i == 0) ? "TÚ" : $"BOT {i}";
+                    // Si el índice de red coincide con tu ID local, eres tú.
+                    string nombre = (i == localId) ? "TÚ" : $"JUGADOR {i}";
                     profileUI.ActualizarPerfil(nombre, 3, 0, -1);
                 }
             }
         }
 
-        // --- ORDEN DE DIBUJADO---
-        if (numJugadores == 5)
+        // --- ORDEN DE DIBUJADO (Aseguramos que tu mano se dibuje la última para tapar al resto) ---
+        // Como sabemos que tú eres el 'localId', mandamos tu mano al final.
+        if (manosGeneradas.Length > localId && manosGeneradas[localId] != null)
         {
-            manosGeneradas[2].transform.SetSiblingIndex(0); 
-            manosGeneradas[3].transform.SetSiblingIndex(1); 
-            manosGeneradas[1].transform.SetSiblingIndex(2); 
-            manosGeneradas[4].transform.SetSiblingIndex(3); 
-            manosGeneradas[0].transform.SetSiblingIndex(4); 
-        }
-        else if (numJugadores == 6)
-        {
-            manosGeneradas[3].transform.SetSiblingIndex(0); 
-            manosGeneradas[2].transform.SetSiblingIndex(1); 
-            manosGeneradas[4].transform.SetSiblingIndex(2); 
-            manosGeneradas[1].transform.SetSiblingIndex(3); 
-            manosGeneradas[5].transform.SetSiblingIndex(4); 
-            manosGeneradas[0].transform.SetSiblingIndex(5); 
-        }
-        else
-        {
-            if (manosGeneradas.Length > 0 && manosGeneradas[0] != null)
-            {
-                manosGeneradas[0].transform.SetAsLastSibling();
-            }
+            manosGeneradas[localId].transform.SetAsLastSibling();
         }
         
-        // C) Los perfiles siempre deben dibujarse POR ENCIMA de todo
         foreach(PlayerProfileUI perfil in perfilesActivos)
         {
             perfil.transform.SetAsLastSibling();

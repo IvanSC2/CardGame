@@ -3,8 +3,9 @@ using UnityEngine.EventSystems;
 using System.Collections;
 using System.Collections.Generic; 
 using TMPro; 
+using Unity.Netcode; // NUEVO: Importar Netcode
 
-public class TableZone : MonoBehaviour, IPointerClickHandler
+public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herencia de NetworkBehaviour
 {
     public static TableZone Instance;
 
@@ -46,91 +47,157 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         cartasEnMesa.Clear();
     }
 
+    // =======================================================================
+    // 1. EL CLIC DEL JUGADOR
+    // =======================================================================
     public void OnPointerClick(PointerEventData eventData)
     {
+        // Si hay una carta seleccionada, solicitamos al servidor que la juegue
+        if (InteractionManager.Instance.isPaused) return;
         if (InteractionManager.Instance.HasCardSelected())
         {
             UICard cardToMove = InteractionManager.Instance.SelectedCard;
-            Transform manoOriginal = cardToMove.transform.parent;
+            Transform manoPadre = cardToMove.transform.parent;
             
-            // --- IDENTIFICAMOS AL DUEÑO UNIVERSAL ---
             int duenoIndex = -1;
             for (int i = 0; i < InteractionManager.Instance.playerHands.Count; i++)
             {
-                if (cardToMove.transform.parent == InteractionManager.Instance.playerHands[i].transform)
+                if (manoPadre == InteractionManager.Instance.playerHands[i].transform)
                 {
                     duenoIndex = i;
                     break;
                 }
             }
 
-            // --- Lógica Visual y Movimiento ---
-            CardResizer resizer = cardToMove.GetComponent<CardResizer>();
-            Vector3 finalScale = Vector3.one;
-            if (resizer != null)
-            {
-                finalScale = resizer.targetVisuals.localScale;
-                resizer.enabled = false;
-            }
-            
-            cardToMove.transform.SetParent(this.transform);
-            cardToMove.transform.localPosition = Vector3.zero;
-            cardToMove.transform.localScale = new Vector3(0.85f, 0.85f, 0.85f);
-            cardToMove.transform.localEulerAngles = Vector3.zero;
+            // Encontramos la posición exacta de la carta en la mano (para que el resto de jugadores sepan cuál es)
+            int indexCartaEnMano = cardToMove.transform.GetSiblingIndex();
 
-            if (manoOriginal != null)
-            {
-                HandLayoutFanner fanner = manoOriginal.GetComponent<HandLayoutFanner>();
-                if (fanner != null) fanner.ReorganizarCartas();
-            }
-
-            if (duenoIndex != -1) cartasEnMesa[duenoIndex] = cardToMove;
-            
-            if (resizer != null) resizer.targetVisuals.localScale = finalScale;
-            cardToMove.GetComponent<UnityEngine.UI.Image>().color = Color.white;
-
-            CanvasGroup group = cardToMove.GetComponent<CanvasGroup>();
-            if (group == null) group = cardToMove.gameObject.AddComponent<CanvasGroup>();
-            group.blocksRaycasts = false;
-
-            InteractionManager.Instance.ClearSelection();
-
-            // Detectar si ahn tirado todos los jugadores
-            int jugadoresVivos = 0;
-            for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
-            {
-                if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivos++;
-            }
-
-            if (this.transform.childCount == jugadoresVivos)
-            {
-                InteractionManager.Instance.isPaused = true;
-                InteractionManager.Instance.UpdateVisualStates(); 
-                CheckWinner();
-            }
-            else
-            {
-                InteractionManager.Instance.ChangeTurn();
+            // Si soy yo mismo el que juega (o soy el Host jugando por un Bot), solicito la jugada
+            int localId = (int)NetworkManager.Singleton.LocalClientId;
+            if (duenoIndex == localId || (IsServer && !NetworkManager.Singleton.ConnectedClients.ContainsKey((ulong)duenoIndex)))
+            {   
+                
+                InteractionManager.Instance.ClearSelection();
+                //InteractionManager.Instance.isPaused = true;
+                // Enviar la petición al Servidor
+                SolicitarJugarCartaServerRpc(duenoIndex, indexCartaEnMano);
             }
         }
     }
 
+    // =======================================================================
+    // 2. LA AUTORIDAD DEL SERVIDOR (Recibe la petición y ejecuta)
+    // =======================================================================
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    private void SolicitarJugarCartaServerRpc(int playerIndex, int indexCartaEnMano, RpcParams rpcParams = default)
+    {
+        // 1. Validar que sea el turno del que la ha tirado
+        if (InteractionManager.Instance.currentTurnIndex != playerIndex) return;
+
+        // 2. Avisar a todos los clientes que muevan la carta a la mesa visualmente
+        JugarCartaMesaClientRpc(playerIndex, indexCartaEnMano);
+
+        // 3. Comprobar si la ronda se ha terminado en el servidor
+        int jugadoresVivos = 0;
+        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+        {
+            if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivos++;
+        }
+
+        // Si ya han tirado todos los vivos, la mesa estará llena 
+        StartCoroutine(ValidarFinTurnoMesa(jugadoresVivos));
+    }
+
+    private IEnumerator ValidarFinTurnoMesa(int jugadoresVivos)
+    {
+        yield return new WaitForSeconds(0.1f);
+        
+        if (cartasEnMesa.Count >= jugadoresVivos)
+        {
+            // Pausar y chequear ganador
+            PausarInteraccionClientRpc();
+            CheckWinner(); 
+        }
+        else
+        {
+            // Siguiente turno
+            //PausarInteraccionClientRpc();
+            InteractionManager.Instance.ChangeTurn();
+        }
+    }
+
+    [Rpc(SendTo.Everyone)]
+    private void PausarInteraccionClientRpc()
+    {
+        InteractionManager.Instance.isPaused = true;
+        InteractionManager.Instance.UpdateVisualStates(); 
+    }
+
+    // =======================================================================
+    // 3. SINCRONIZACIÓN VISUAL DE LA MESA (ClientRpc)
+    // =======================================================================
+    [Rpc(SendTo.Everyone)]
+    private void JugarCartaMesaClientRpc(int playerIndex, int indexCartaEnMano)
+    {
+        if (playerIndex >= InteractionManager.Instance.playerHands.Count) return;
+        Transform manoOriginal = InteractionManager.Instance.playerHands[playerIndex].transform;
+        if (indexCartaEnMano >= manoOriginal.childCount) return;
+
+        UICard cardToMove = manoOriginal.GetChild(indexCartaEnMano).GetComponent<UICard>();
+        if (cardToMove == null) return;
+
+        cardToMove.SetFaceUp(true);
+
+        CardResizer resizer = cardToMove.GetComponent<CardResizer>();
+        Vector3 finalScale = Vector3.one;
+        if (resizer != null)
+        {
+            finalScale = resizer.targetVisuals.localScale;
+            resizer.enabled = false;
+        }
+        
+        cardToMove.transform.SetParent(this.transform);
+        cardToMove.transform.localPosition = Vector3.zero;
+        cardToMove.transform.localScale = new Vector3(0.85f, 0.85f, 0.85f);
+        cardToMove.transform.localEulerAngles = Vector3.zero;
+
+        if (manoOriginal != null)
+        {
+            HandLayoutFanner fanner = manoOriginal.GetComponent<HandLayoutFanner>();
+            if (fanner != null) fanner.ReorganizarCartas();
+        }
+
+        cartasEnMesa[playerIndex] = cardToMove;
+        
+        if (resizer != null) resizer.targetVisuals.localScale = finalScale;
+
+        
+        cardToMove.GetComponent<UnityEngine.UI.Image>().color = Color.white;
+        CanvasGroup group = cardToMove.GetComponent<CanvasGroup>();
+        if (group == null) group = cardToMove.gameObject.AddComponent<CanvasGroup>();
+        group.blocksRaycasts = false;
+        group.alpha = 1f;
+    }
+
+    // =======================================================================
+    // 4. LÓGICA DE GANADOR Y RONDAS (Ejecutado por el Servidor)
+    // =======================================================================
     public void ForceEndRoundAnalysis()
     {
         UpdateUI(); 
         Debug.Log("--- FIN DE RONDA CIEGA ---");
-        StartCoroutine(WaitAndResolveRound());
+        if (IsServer) StartCoroutine(WaitAndResolveRound());
     }
 
     private void CheckWinner()
     {
+        if (!IsServer) return; 
+
         bazasJugadas++; 
-        
         int maxScore = -1;
         int winnerIndex = -1;
         List<string> registroCartas = new List<string>();
 
-        // --- CALCULAR EL GANADOR ---
         foreach (var kvp in cartasEnMesa)
         {
             int playerIndex = kvp.Key;
@@ -149,16 +216,14 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
 
         Debug.Log($"<color=cyan>--- RESULTADO BAZA --- {string.Join(", ", registroCartas)}</color>");
 
-        // --- ASIGNAR LA VICTORIA AL ARRAY MAESTRO ---
         if (winnerIndex != -1)
         {
             InteractionManager.Instance.bazasGanadas[winnerIndex]++;
             
-            if (winnerIndex == 0) InteractionManager.Instance.SetInfoMessage("¡TÚ GANAS LA BAZA!\n");
-            else InteractionManager.Instance.SetInfoMessage($"¡EL BOT {winnerIndex} GANA LA BAZA!\n");
+            AnunciarGanadorBazaClientRpc(winnerIndex, InteractionManager.Instance.bazasGanadas[winnerIndex]);
         }
         
-        UpdateUI(); 
+        UpdateUIClientRpc(); 
 
         int limiteRonda = InteractionManager.Instance.currentRoundCards;
         if (bazasJugadas >= limiteRonda) 
@@ -172,33 +237,41 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
         }
     }
 
+    [Rpc(SendTo.Everyone)]
+    private void AnunciarGanadorBazaClientRpc(int winnerIndex, int totalBazasDelGanador)
+    {
+        // Actualizamos el array local del Cliente con el dato real del Servidor
+        InteractionManager.Instance.bazasGanadas[winnerIndex] = totalBazasDelGanador;
+
+        int localId = (int)NetworkManager.Singleton.LocalClientId;
+        if (winnerIndex == localId) InteractionManager.Instance.SetInfoMessage("¡TÚ GANAS LA BAZA!\n");
+        else InteractionManager.Instance.SetInfoMessage($"¡EL JUGADOR {winnerIndex} GANA LA BAZA!\n");
+    }
+
     IEnumerator WaitAndResolveRound()
     {
         yield return new WaitForSeconds(1.5f);
         ResolverApuestas(); 
     }
 
-    // =======================================================================
-    // JUEZ UNIVERSAL DE LAS APUESTAS 
-    // =======================================================================
     private void ResolverApuestas()
     {
+        if (!IsServer) return;
+
         string mensajeResultado = "RESULTADOS:\n";
         InteractionManager.Instance.rondasJugadasTotales++;
         int totalPlayers = InteractionManager.Instance.totalPlayers;
 
-        // Guardamos si estabas vivo ANTES de la sentencia
         bool p1EstabaVivo = InteractionManager.Instance.vidas[0] > 0;
         int jugadoresVivos = 0;
 
         for (int i = 0; i < totalPlayers; i++)
         {
-            // ¡NUEVO!: Si este jugador ya estaba muerto, lo ignoramos por completo
             if (InteractionManager.Instance.vidas[i] <= 0) continue;
 
             int bazas = InteractionManager.Instance.bazasGanadas[i];
             int apuesta = InteractionManager.Instance.apuestas[i];
-            string nombre = (i == 0) ? "TÚ" : $"BOT {i}";
+            string nombre = (i == 0) ? "TÚ" : $"BOT {i}"; // Esto lo mantengo para los logs del server
 
             InteractionManager.Instance.bazasTotales[i] += bazas;
 
@@ -209,94 +282,137 @@ public class TableZone : MonoBehaviour, IPointerClickHandler
             }
             else
             {
-                InteractionManager.Instance.vidas[i]--; // ¡Hachazo!
+                InteractionManager.Instance.vidas[i]--; 
                 mensajeResultado += $"{nombre}: FALLA (-1 Vida).\n";
             }
 
-            // Contamos cuántos siguen vivos en la mesa
-            if (InteractionManager.Instance.vidas[i] > 0)
-            {
-                jugadoresVivos++;
-            }
+            if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivos++;
         }
 
-        InteractionManager.Instance.SetInfoMessage(mensajeResultado);
-        UpdateUI();
+        // Enviamos la resolución al resto de jugadores (para que actualicen vidas/texto)
+        SincronizarResolucionRondaClientRpc(mensajeResultado, InteractionManager.Instance.vidas, InteractionManager.Instance.bazasTotales, InteractionManager.Instance.apuestasAcertadasTotales);
 
-        // --- COMPROBACIÓN DE PUESTOS ---
         bool p1SigueVivo = InteractionManager.Instance.vidas[0] > 0;
 
         if (p1EstabaVivo && !p1SigueVivo)
         {
-            // Acabas de morir.
             puestoP1Temp = jugadoresVivos + 1;
             Invoke("TriggerFin", 2.0f);
-
-            
-            if (jugadoresVivos > 1) 
-            {
-                StartCoroutine(ResetRoundAfterDelay());
-            }
+            if (jugadoresVivos > 1) StartCoroutine(ResetRoundAfterDelay());
         }
         else if (jugadoresVivos <= 1)
         {
-            // Fin de la partida total Todos han muerto (o solo queda uno)
             if (p1SigueVivo) puestoP1Temp = 1;
             Invoke("TriggerFin", 2.0f);
         }
         else
         {
-            // La partida sigue con normalidad
             StartCoroutine(ResetRoundAfterDelay());
         }
     }
 
-   private int puestoP1Temp; // Variable temporal numérica
+    [Rpc(SendTo.Everyone)]
+    private void SincronizarResolucionRondaClientRpc(string mensaje, int[] vidasServidor, int[] bazasTot, int[] apuestasAcertadasTot)
+    {
+        InteractionManager.Instance.SetInfoMessage(mensaje);
+        
+        int localId = (int)NetworkManager.Singleton.LocalClientId;
+        // Comprobamos nuestra vida ANTES de actualizar
+        bool estabaVivo = InteractionManager.Instance.vidas[localId] > 0;
+
+        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+        {
+            InteractionManager.Instance.vidas[i] = vidasServidor[i];
+            InteractionManager.Instance.bazasTotales[i] = bazasTot[i];
+            InteractionManager.Instance.apuestasAcertadasTotales[i] = apuestasAcertadasTot[i];
+        }
+        
+        UpdateUI();
+
+        // Comprobamos nuestra vida DESPUÉS de actualizar
+        bool sigoVivo = InteractionManager.Instance.vidas[localId] > 0;
+
+        int jugadoresVivos = 0;
+        foreach (int v in InteractionManager.Instance.vidas) if (v > 0) jugadoresVivos++;
+
+        // --- CADA CLIENTE JUZGA SU PROPIO GAME OVER ---
+        if (estabaVivo && !sigoVivo)
+        {
+            // Acabo de morir esta ronda
+            int miPuesto = jugadoresVivos + 1;
+            if (PauseManager.Instance != null) PauseManager.Instance.TriggerGameOver(miPuesto);
+        }
+        else if (jugadoresVivos <= 1 && sigoVivo)
+        {
+            // Quedo yo solo en la mesa, soy el ganador
+            if (PauseManager.Instance != null) PauseManager.Instance.TriggerGameOver(1);
+        }
+    }
+
+    private int puestoP1Temp; 
     private void TriggerFin()
     {
         if(PauseManager.Instance != null)
             PauseManager.Instance.TriggerGameOver(puestoP1Temp);
     }
 
-    
-
     IEnumerator ResetRoundAfterDelay()
     {
         yield return new WaitForSeconds(3.0f); 
+        LimpiarMesaParaSiguienteRondaClientRpc();
         
+        InteractionManager.Instance.AdvanceRoundSequence();
+        
+        ReanudarPartidaClientRpc(InteractionManager.Instance.currentRoundCards);
+    }
+
+    [Rpc(SendTo.Everyone)]
+    private void LimpiarMesaParaSiguienteRondaClientRpc()
+    {
         ClearTableNow();
         bazasJugadas = 0;
-        
-        // Reseteamos las bazas y las apuestas para la nueva ronda
         for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++) 
         {
             InteractionManager.Instance.bazasGanadas[i] = 0;
             InteractionManager.Instance.apuestas[i] = -1;
         }
         UpdateUI();
+    }
 
-        InteractionManager.Instance.AdvanceRoundSequence();
-        
+    [Rpc(SendTo.Everyone)]
+    private void ReanudarPartidaClientRpc(int curRoundCards)
+    {
         InteractionManager.Instance.isPaused = false;
-        InteractionManager.Instance.SetInfoMessage($"Ronda terminada.\nSiguiente: {InteractionManager.Instance.currentRoundCards} cartas.");
+        InteractionManager.Instance.SetInfoMessage($"Ronda terminada.\nSiguiente: {curRoundCards} cartas.");
     }
 
     IEnumerator CleanTableRoutine(int nextTurn)
     {
         yield return new WaitForSeconds(1.5f);
-        ClearTableNow();
-        InteractionManager.Instance.isPaused = false;
+        LimpiarMesaIntermediaClientRpc();
+        
         InteractionManager.Instance.SetTurn(nextTurn);
     }
 
+    [Rpc(SendTo.Everyone)]
+    private void LimpiarMesaIntermediaClientRpc()
+    {
+        ClearTableNow();
+        InteractionManager.Instance.isPaused = false;
+    }
+
+    // =======================================================================
+    // UI Y CÁLCULOS MENORES
+    // =======================================================================
+    [Rpc(SendTo.Everyone)]
+    private void UpdateUIClientRpc() { UpdateUI(); }
+
     private void UpdateUI()
     {
-        // 1. Actualizamos la nueva UI dinámica (Los Perfiles)
         if (InteractionManager.Instance != null)
         {
             InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
 
-            // 2. Por si sigues usando los textos antiguos en el Canvas general
             if (InteractionManager.Instance.totalPlayers > 1)
             {
                 scoreTextP1?.SetText($"P1: {InteractionManager.Instance.bazasGanadas[0]}");

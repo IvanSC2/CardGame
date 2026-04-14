@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Unity.Netcode;
 
 public class MainMenuManager : MonoBehaviour
 {
@@ -24,27 +25,34 @@ public class MainMenuManager : MonoBehaviour
 
 
     public void Jugar()
-    { 
+{ 
+    if (selectorJugadores != null)
+    {
+        GameConfig.nPlayers = selectorJugadores.ObtenerIndice() + 1; 
+    }
+    
+    if (selectorDificultad != null)
+    {
+        GameConfig.difficulty = selectorDificultad.ObtenerIndice(); 
+    }
 
-        
-        if (selectorJugadores != null)
-        {
-            GameConfig.nPlayers = selectorJugadores.ObtenerIndice() + 1; 
-            Debug.Log($"Numero de Jugadores: {selectorJugadores.ObtenerIndice() + 1}");
-        }
-        
-        if (selectorDificultad != null)
-        {
-            GameConfig.difficulty = selectorDificultad.ObtenerIndice(); 
-            Debug.Log($"Nivel de Dificultad:{selectorDificultad.ObtenerIndice()}");
-        }
-
-           if (CardDatabase.deck != null)
+    if (CardDatabase.deck != null)
     {
         CardDatabase.deck.Clear();
     }
-        SceneManager.LoadScene("MainGame");
+
+    // --- ¡NUEVO VIAJE EN RED! ---
+    if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
+    {
+        // El Host conduce el autobús y cambia la escena para todos
+        NetworkManager.Singleton.SceneManager.LoadScene("MainGame", LoadSceneMode.Single);
     }
+    else
+    {
+        // El Cliente simplemente espera (puedes poner un texto en la UI aquí si quieres)
+        Debug.Log("Eres un cliente. Esperando a que el Host inicie la partida...");
+    }
+}
 
     public void AbrirOpciones()
     {

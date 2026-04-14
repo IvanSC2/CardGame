@@ -3,8 +3,9 @@ using UnityEngine.UI;
 using TMPro;
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Netcode; // ¡NUEVO!
 
-public class BettingManager : MonoBehaviour
+public class BettingManager : NetworkBehaviour 
 {
     public static BettingManager Instance;
 
@@ -19,9 +20,9 @@ public class BettingManager : MonoBehaviour
     [Header("Game State")]
     public int cardsInRound = 5;
     
-    //VARIABLES DE CONTROL 
-    private int currentBetterIndex = 0; // A quién le toca apostar ahora mismo
-    private int betsPlaced = 0;         // Cuántas personas han apostado ya
+    // VARIABLES DE CONTROL DEL SERVIDOR
+    private int currentBetterIndex = 0; 
+    private int betsPlaced = 0;         
 
     private void Awake()
     {
@@ -31,142 +32,210 @@ public class BettingManager : MonoBehaviour
         for (int i = 0; i < betButtons.Length; i++)
         {
             int val = i;
-            betButtons[i].onClick.AddListener(() => OnBetClicked(val));
+            // Cuando pulsas el botón, llamo a la petición de red
+            betButtons[i].onClick.AddListener(() => IntentarApostar(val));
         }
     }
 
+    // ========================================================================
+    // 1. INICIO ORQUESTADO POR EL SERVIDOR
+    // ========================================================================
     public void StartBettingPhase(int numCards)
     {
+        if (!IsServer) return; // Solo el Host inicia esto
+
         cardsInRound = numCards;
-        tableObject.SetActive(false);
-        panelRoot.SetActive(true);
-        
-        if (InteractionManager.Instance != null)
-            InteractionManager.Instance.RefreshHandVisibility();
+        betsPlaced = 0;
+        currentBetterIndex = InteractionManager.Instance.manoMesaIndex;
 
+        // Limpiamos las apuestas de todos en el servidor
         int totalPlayers = InteractionManager.Instance.totalPlayers;
-
-        // 1. Reseteamos el array maestro de apuestas a -1 (nadie ha apostado)
         for (int i = 0; i < totalPlayers; i++)
         {
             InteractionManager.Instance.apuestas[i] = -1;
         }
-        
-        betsPlaced = 0;
 
-        // 2. Quien empieza a apostar
-        currentBetterIndex = InteractionManager.Instance.manoMesaIndex;
+        // Avisamos a todos de que abran sus paneles
+        PrepararFaseApuestasClientRpc(numCards);
         
-        InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
-
-        // 3. Arrancamos apuestas
-        ProcessNextBet();
+        // Empezamos a procesar los turnos
+        ProcessNextBetServer();
     }
 
-    private void ProcessNextBet()
+    // ========================================================================
+    // 2. LÓGICA DE TURNOS (SOLO SERVIDOR)
+    // ========================================================================
+    private void ProcessNextBetServer()
     {
         int totalPlayers = InteractionManager.Instance.totalPlayers;
         
-        //Calculamos cuántos vivos hay en total en la mesa
         int jugadoresVivosRonda = 0;
         for (int i = 0; i < totalPlayers; i++)
         {
             if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivosRonda++;
         }
 
-        // Ver si han aspostado todos los vivos
+        // Si ya han apostado todos, cerramos fase
         if (betsPlaced >= jugadoresVivosRonda)
         {
-            StartCoroutine(EndBettingPhase());
+            StartCoroutine(EndBettingPhaseServer());
             return;
         }
 
-        //  Si al que le toca está muerto, pasamos al siguiente automáticamente
+        // Saltar muertos
         while (InteractionManager.Instance.vidas[currentBetterIndex] <= 0)
         {
             currentBetterIndex = (currentBetterIndex + 1) % totalPlayers;
         }
 
-        // Saber si el que va a apostar ahora es el último VIVO
         bool isLastToBet = (betsPlaced == jugadoresVivosRonda - 1);
 
-        if (currentBetterIndex == 0)
-        {
-            SetupUIForP1(isLastToBet);
-        }
-        else
-        {
-            StartCoroutine(AIBetRoutine(currentBetterIndex, isLastToBet));
-        }
-    }
-
-    private void SetupUIForP1(bool amILast)
-    {
-        if (betsPlaced > 0)
-        {
-            int lastBetter = (currentBetterIndex - 1 + InteractionManager.Instance.totalPlayers) % InteractionManager.Instance.totalPlayers;
-            int lastBet = InteractionManager.Instance.apuestas[lastBetter]; // Leemos del Manager
-            titleText.text = $"JUGADOR {lastBetter} APOSTÓ {lastBet}. TU TURNO:";
-        }
-        else
-        {
-            titleText.text = "¿Cuántas bazas ganarás?";
-        }
-            
-        EnableButtons(true);
-        
-        //Apuesta prohibida
+        // Calcular apuesta prohibida (solo afecta al último)
         int forbiddenBet = -1;
-        if (amILast) 
+        if (isLastToBet) 
         {
             int sumBets = 0;
-            // Sumamos leyendo del array maestro
-            for(int i = 0; i < InteractionManager.Instance.totalPlayers; i++) 
+            for(int i = 0; i < totalPlayers; i++) 
             {
                 if (InteractionManager.Instance.apuestas[i] >= 0)
                     sumBets += InteractionManager.Instance.apuestas[i];
             }
             forbiddenBet = cardsInRound - sumBets;
         }
-        
-        for (int i = 0; i < betButtons.Length; i++)
+
+        // Avisar a TODOS de quién es el turno
+        AvisarTurnoApuestaClientRpc(currentBetterIndex, forbiddenBet, betsPlaced);
+
+        // Si el jugador NO es un cliente humano conectado, es un BOT. El servidor calcula por él.
+        if (!NetworkManager.Singleton.ConnectedClients.ContainsKey((ulong)currentBetterIndex))
         {
-            if (i <= cardsInRound)
-            {
-                betButtons[i].gameObject.SetActive(true);
-                betButtons[i].interactable = (i != forbiddenBet);
-            }
-            else
-            {
-                betButtons[i].gameObject.SetActive(false);
-            }
+            StartCoroutine(AIBetRoutine(currentBetterIndex, isLastToBet, forbiddenBet));
         }
     }
 
-    private void OnBetClicked(int amount)
+    // ========================================================================
+    // 3. COMUNICACIONES HACIA LOS CLIENTES (ClientRpc)
+    // ========================================================================
+
+    public void FuerzaPasarTurnoDesconectado(int playerIndex)
+{
+    if (!IsServer) return;
+    if (currentBetterIndex == playerIndex)
     {
-        // Guardar tu EL ARRAY
-        InteractionManager.Instance.apuestas[0] = amount;
-        InteractionManager.Instance.SetInfoMessage($"TÚ APUESTAS: {amount}");
-
-        //Actualizamos los letreros visuales al instante
-        InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
-
-        DisableButtons(); 
-        
-        // Pasar al siguiente
+        InteractionManager.Instance.apuestas[playerIndex] = 0; // Apuesta neutra
         betsPlaced++;
         currentBetterIndex = (currentBetterIndex + 1) % InteractionManager.Instance.totalPlayers;
-        
-        ProcessNextBet();
+        ProcessNextBetServer();
+    }
+}
+    [ClientRpc]
+    private void PrepararFaseApuestasClientRpc(int numCards)
+    {
+        cardsInRound = numCards;
+        tableObject.SetActive(false);
+        panelRoot.SetActive(true);
+        DisableButtons();
+
+        // Limpiamos los arrays visualmente en todos los PCs
+        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+            InteractionManager.Instance.apuestas[i] = -1;
+
+        InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
     }
 
-    // PENSAMIENTO UNIVERSAL DE LA IA
-    IEnumerator AIBetRoutine(int botIndex, bool isLast)
+    [ClientRpc]
+    private void AvisarTurnoApuestaClientRpc(int turnoDe, int forbiddenBet, int apuestasRealizadas)
     {
-        titleText.text = $"BOT {botIndex} ESTÁ PENSANDO...";
-        DisableButtons();
-        yield return new WaitForSeconds(1.5f);
+        int miIdLocal = (int)NetworkManager.Singleton.LocalClientId;
+
+        // Texto informativo en la parte superior
+        if (apuestasRealizadas > 0)
+        {
+            int lastBetter = (turnoDe - 1 + InteractionManager.Instance.totalPlayers) % InteractionManager.Instance.totalPlayers;
+            int lastBet = InteractionManager.Instance.apuestas[lastBetter]; 
+            titleText.text = $"JUGADOR {lastBetter} APOSTÓ {lastBet}.";
+        }
+        else
+        {
+            titleText.text = "FASE DE APUESTAS";
+        }
+
+        //Mi turno
+        if (turnoDe == miIdLocal)
+        {
+            titleText.text += "\n¡ES TU TURNO!";
+            
+            // Activar solo los botones legales
+            for (int i = 0; i < betButtons.Length; i++)
+            {
+                if (i <= cardsInRound)
+                {
+                    betButtons[i].gameObject.SetActive(true);
+                    betButtons[i].interactable = (i != forbiddenBet);
+                }
+                else
+                {
+                    betButtons[i].gameObject.SetActive(false);
+                }
+            }
+        }
+        else
+        {
+            // No me toca, o es un Bot
+            titleText.text += $"\nEsperando al Jugador {turnoDe}...";
+            DisableButtons();
+        }
+    }
+
+    [ClientRpc]
+    private void RegistrarApuestaClientRpc(int playerIndex, int amount)
+    {
+        // Todos los ordenadores actualizan sus datos y perfiles visuales
+        InteractionManager.Instance.apuestas[playerIndex] = amount;
+        
+        string nombre = (playerIndex == (int)NetworkManager.Singleton.LocalClientId) ? "TÚ" : $"JUGADOR {playerIndex}";
+        InteractionManager.Instance.SetInfoMessage($"{nombre} APUESTA: {amount}");
+        InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
+    }
+
+    [ClientRpc]
+    private void CerrarPanelClientRpc()
+    {
+        panelRoot.SetActive(false);
+        tableObject.SetActive(true);
+    }
+
+    // ========================================================================
+    // 4. ACCIONES DEL HUMANO (ServerRpc)
+    // ========================================================================
+    private void IntentarApostar(int amount)
+    {
+        DisableButtons(); // Ocultamos localmente al pulsar para evitar doble clic
+        EnviarApuestaServerRpc(amount);
+    }
+
+[Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+private void EnviarApuestaServerRpc(int amount, RpcParams rpcParams = default) // Cambiado a RpcParams
+{
+    ulong senderId = rpcParams.Receive.SenderClientId;
+    
+    // Validación de seguridad
+    if ((ulong)currentBetterIndex != senderId) return; 
+
+    // El servidor acepta la apuesta, avisa a todos y pasa turno
+    RegistrarApuestaClientRpc(currentBetterIndex, amount);
+    
+    betsPlaced++;
+    currentBetterIndex = (currentBetterIndex + 1) % InteractionManager.Instance.totalPlayers;
+    ProcessNextBetServer();
+}
+
+    // ========================================================================
+    // 5. RUTINAS DEL SERVIDOR (IA y Cierre)
+    // ========================================================================
+    IEnumerator AIBetRoutine(int botIndex, bool isLast, int forbiddenBet)
+    {
+        yield return new WaitForSeconds(1.5f); //  Pausa para que no sea instantaneo
 
         int sumBets = 0;
         for(int i = 0; i < InteractionManager.Instance.totalPlayers; i++) 
@@ -179,19 +248,15 @@ public class BettingManager : MonoBehaviour
 
         if (cardsInRound == 1)
         {
-            // 1. MIRAMOS LAS CARTAS DE TODOS LOS RIVALES VIVOS EN LA MESA
             List<Card> visibleCards = new List<Card>();
             for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
             {
-                // Si el jugador está vivo, y no es el propio bot que está pensando
                 if (i != botIndex && InteractionManager.Instance.vidas[i] > 0)
                 {
                     var hand = GetCardsFromGroup(InteractionManager.Instance.playerHands[i]);
                     if (hand.Count > 0) visibleCards.Add(hand[0]);
                 }
             }
-            
-            // 2. LE PASAMOS TODAS LAS CARTAS VISIBLES AL CEREBRO
             betAmount = AIController.Instance.CalculateBlindBet(visibleCards, sumBets, isLast); 
         }
         else
@@ -200,22 +265,24 @@ public class BettingManager : MonoBehaviour
             betAmount = AIController.Instance.CalculateAIBet(botHand, sumBets, cardsInRound, isLast); 
         }
 
-        InteractionManager.Instance.apuestas[botIndex] = betAmount;
-        InteractionManager.Instance.SetInfoMessage($"BOT {botIndex} APUESTA: {betAmount}");
-        InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
+        // Si por algún motivo matemático la IA eligió la apuesta prohibida, la forzamos a cambiar
+        if (betAmount == forbiddenBet)
+        {
+            betAmount = (betAmount > 0) ? betAmount - 1 : betAmount + 1;
+        }
 
-        yield return new WaitForSeconds(1.0f);
+        RegistrarApuestaClientRpc(botIndex, betAmount);
+
+        yield return new WaitForSeconds(0.5f);
 
         betsPlaced++;
         currentBetterIndex = (currentBetterIndex + 1) % InteractionManager.Instance.totalPlayers;
-        
-        ProcessNextBet();
+        ProcessNextBetServer();
     }
     
-    IEnumerator EndBettingPhase()
+    IEnumerator EndBettingPhaseServer()
     {
-        panelRoot.SetActive(false);
-        tableObject.SetActive(true);
+        CerrarPanelClientRpc();
 
         if (cardsInRound == 1)
             InteractionManager.Instance.ResolveBlindRoundImmediate();
@@ -225,6 +292,7 @@ public class BettingManager : MonoBehaviour
         yield return null;
     }
     
+    // UTILIDADES
     private void EnableButtons(bool enable) { foreach (var b in betButtons) b.gameObject.SetActive(enable); }
     private void DisableButtons() { foreach (var b in betButtons) b.gameObject.SetActive(false); }
 

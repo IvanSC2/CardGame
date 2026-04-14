@@ -1,8 +1,9 @@
 using UnityEngine;
 using UnityEngine.UI;
 using System.Collections.Generic;
+using Unity.Netcode;
 
-public class HandTester : MonoBehaviour
+public class HandTester : NetworkBehaviour
 {
     [Header("Configuración")]
     public GameObject cardPrefab;
@@ -19,23 +20,22 @@ public class HandTester : MonoBehaviour
         if (showDeckButton != null) showDeckButton.onClick.AddListener(ShowFullDeck);
     }
 
-    public void DrawNewHand()
+  public void DrawNewHand()
     {
-        PrepararVista(esGrid: false);
+        // --- 1. SEGURIDAD RED: Solo el Host decide el reparto ---
+        if (!IsServer) return;
 
-        if (TableZone.Instance != null)
-        {
-            TableZone.Instance.ClearTableNow();
-        }
-        
-        // 1. Extraemos cuántas cartas tocan en esta ronda
+        // --- 2. Limpiar mesas en las pantallas de todos ---
+        LimpiarMesaClientRpc();
+
+        // Extraemos cuántas cartas tocan en esta ronda
         int cardsToDeal = 5; 
         if (InteractionManager.Instance != null) 
         {
             cardsToDeal = InteractionManager.Instance.currentRoundCards;
         }
 
-        // 2. Calculamos cartas necesarias SOLO para los VIVOS
+        // Calculamos cartas necesarias SOLO para los VIVOS
         int totalJugadores = 2; 
         if (TableManagerLayout.Instance != null && TableManagerLayout.Instance.manosActivas.Count > 0)
         {
@@ -63,14 +63,11 @@ public class HandTester : MonoBehaviour
             return;
         }
 
-        // 3. REPARTIMOS SOLO A LOS VIVOS
+        // --- 3. REPARTIMOS SOLO A LOS VIVOS ---
         if (TableManagerLayout.Instance != null)
         {
             for (int j = 0; j < TableManagerLayout.Instance.manosActivas.Count; j++)
             {
-                CanvasGroup mano = TableManagerLayout.Instance.manosActivas[j];
-                if (mano == null) continue;
-                
                 // Filtro para saltar a los muertos
                 if (InteractionManager.Instance != null && InteractionManager.Instance.vidas[j] <= 0)
                 {
@@ -79,27 +76,64 @@ public class HandTester : MonoBehaviour
                 
                 for (int i = 0; i < cardsToDeal; i++) 
                 {
+                    // El Host roba la carta real de la base de datos
                     Card data = CardDatabase.DrawTopCard();
                     if (data == null) break;
                     
-                    InstanciarCarta(data, mano.transform);
-                }
-
-                HandLayoutFanner fannerMesa = mano.GetComponent<HandLayoutFanner>();
-                if (fannerMesa != null) 
-                {
-                    fannerMesa.ReorganizarCartas();
+                    // En lugar de instanciarla solo en su pantalla, le grita a todos por la red:
+                    RepartirCartaClientRpc(data.id, data.suit, data.rank, data.value, j);
                 }
             }
         }
 
-        // 4. Aplicamos las reglas visuales
+        // --- 4. El Host avisa de que el reparto ha terminado ---
+        TerminarRepartoClientRpc(cardsToDeal);
+    }
+
+    // =========================================================================
+    // MÉTODOS RPC (Órdenes que el Host envía y se ejecutan en TODOS los clientes)
+    // =========================================================================
+
+    [ClientRpc]
+    private void LimpiarMesaClientRpc()
+    {
+        PrepararVista(esGrid: false);
+        if (TableZone.Instance != null)
+        {
+            TableZone.Instance.ClearTableNow();
+        }
+    }
+
+    [ClientRpc]
+    private void RepartirCartaClientRpc(int id, string suit, string rank, int value, int manoIndex)
+    {
+        // 1. Reconstruimos la carta en la memoria del cliente con los datos recibidos
+        Card cartaSincronizada = new Card(id, suit, rank, value);
+        
+        // 2. Buscamos la mano correcta y la instanciamos físicamente
+        if (TableManagerLayout.Instance != null && TableManagerLayout.Instance.manosActivas.Count > manoIndex)
+        {
+            CanvasGroup mano = TableManagerLayout.Instance.manosActivas[manoIndex];
+            InstanciarCarta(cartaSincronizada, mano.transform);
+
+            HandLayoutFanner fannerMesa = mano.GetComponent<HandLayoutFanner>();
+            if (fannerMesa != null) 
+            {
+                fannerMesa.ReorganizarCartas();
+            }
+        }
+    }
+
+    [ClientRpc]
+    private void TerminarRepartoClientRpc(int cardsToDeal)
+    {
+        // Aplicamos las reglas visuales (caras arriba/abajo) en todos los PCs
         if (InteractionManager.Instance != null)
         {
             InteractionManager.Instance.RefreshHandVisibility();
         }
 
-        // 5. Iniciamos la fase de apuestas
+        // Iniciamos la fase de apuestas para todos
         if (BettingManager.Instance != null)
         {
             BettingManager.Instance.StartBettingPhase(cardsToDeal);
