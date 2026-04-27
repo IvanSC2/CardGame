@@ -1,14 +1,15 @@
 using UnityEngine;
 using TMPro;
+
 public class OptionController : MonoBehaviour
 {
-    [Header ("Referecias UI")]
+    [Header("Referencias UI")]
     public TMP_Text textoValor;
     
-    [Header ("Configuración")]
+    [Header("Configuración")]
     public string[] opciones;
-    private int indiceActual =0;
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
+    private int indiceActual = 0;
+
     void Start()
     {
         ActualizarPantalla();
@@ -21,7 +22,7 @@ public class OptionController : MonoBehaviour
         {
             indiceActual = opciones.Length - 1;        
         } 
-          ActualizarPantalla();
+        ActualizarPantalla();
     }
     
     public void SiguienteOpcion()
@@ -31,26 +32,26 @@ public class OptionController : MonoBehaviour
         {
             indiceActual = 0;        
         } 
-          ActualizarPantalla();
+        ActualizarPantalla();
     }
 
     public void ActualizarPantalla()
     {
-        if (opciones.Length> 0 && textoValor != null)
+        if (opciones.Length > 0 && textoValor != null)
         {
             textoValor.text = opciones[indiceActual];
         }
-
     }
+
+    // --- GETTERS & SETTERS (Fundamentales para la lógica) ---
+
     public int ObtenerIndice()
     {
         return indiceActual;
     }
 
-    // Añade esta función al final de ArcadeSelector.cs
     public void EstablecerIndice(int nuevoIndice)
     {
-        // Comprobamos por seguridad que el índice sea válido
         if (nuevoIndice >= 0 && nuevoIndice < opciones.Length)
         {
             indiceActual = nuevoIndice;

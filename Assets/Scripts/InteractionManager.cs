@@ -10,7 +10,7 @@ public enum GameState { PLAYER_TURN, AI_TURN, WAITING }
 public class InteractionManager : NetworkBehaviour
 {
     public static InteractionManager Instance;
-// Añade esto al principio de tu InteractionManager
+    // Añade esto al principio de tu InteractionManager
     [Header("Control de Estado")]
     public bool yaHeJugadoMiTurno = false;
     [Header("Red")]
@@ -19,10 +19,10 @@ public class InteractionManager : NetworkBehaviour
 
     [Header("UI Feedback")]
     public TextMeshProUGUI infoLineText;
-    
+
     [Header("Debug")]
-    public bool isDebugAIVisible = false; 
-    
+    public bool isDebugAIVisible = false;
+
     [Header("Control de Rondas")]
     public int currentRoundCards = 5;
     private int roundDelta = -1;
@@ -34,9 +34,9 @@ public class InteractionManager : NetworkBehaviour
 
     [Header("Control de Turnos")]
     public int currentTurnIndex = 0;
-    public int manoMesaIndex = 0; 
+    public int manoMesaIndex = 0;
     public int totalPlayers = 0;
-    public GameState currentState; 
+    public GameState currentState;
 
     [Header("Sillas")]
     public List<CanvasGroup> playerHands = new List<CanvasGroup>();
@@ -44,8 +44,8 @@ public class InteractionManager : NetworkBehaviour
     [Header("Estadísticas Globales (Fin de Partida)")]
     public int rondasJugadasTotales = 0;
     public int[] apuestasAcertadasTotales;
-    public int[] bazasTotales; 
-    
+    public int[] bazasTotales;
+
     public UICard SelectedCard { get; private set; }
     public bool isPaused = false;
 
@@ -54,9 +54,9 @@ public class InteractionManager : NetworkBehaviour
         if (Instance != null && Instance != this) Destroy(this.gameObject);
         else Instance = this;
         currentState = GameState.WAITING;
-        
+
         string[] nombresDificultad = { "Pacifico", "Normal", "Difícil", "Experto", "Imposible" };
-        int numBots = GameConfig.nPlayers; 
+        int numBots = GameConfig.nPlayers;
         int difIndex = GameConfig.difficulty;
         SetInfoMessage($"Numero de bots: {numBots}\nDificultad: {nombresDificultad[difIndex]}");
     }
@@ -67,16 +67,16 @@ public class InteractionManager : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
 
-        
+
         if (IsServer)
         {
             totalJugadoresRed.Value = GameConfig.nPlayers < 2 ? 2 : GameConfig.nPlayers;
-            
+
             //Detecta la desconexion de un Jugador
             NetworkManager.Singleton.OnClientDisconnectCallback += ControlarDesconexion;
         }
 
-        NetworkManager.Singleton.OnClientDisconnectCallback += (id) => 
+        NetworkManager.Singleton.OnClientDisconnectCallback += (id) =>
         {
             // Si la ID que se desconecta es la mía o la del servidor (0)
             // y no soy el servidor, significa que el Host ha cerrado la partida.
@@ -86,7 +86,7 @@ public class InteractionManager : NetworkBehaviour
             }
         };
 
-        totalJugadoresRed.OnValueChanged += (valorViejo, valorNuevo) => 
+        totalJugadoresRed.OnValueChanged += (valorViejo, valorNuevo) =>
         {
             if (valorNuevo > 0) StartCoroutine(EsperarYGenerar(valorNuevo));
         };
@@ -96,18 +96,18 @@ public class InteractionManager : NetworkBehaviour
             StartCoroutine(EsperarYGenerar(totalJugadoresRed.Value));
         }
     }
-private void ControlarDesconexion(ulong clientId)
+    private void ControlarDesconexion(ulong clientId)
     {
 
-        
-        if (!IsServer) return; 
+
+        if (!IsServer) return;
 
         int playerIndex = (int)clientId;
         Debug.Log($"⚠️ El Jugador {playerIndex} se ha desconectado. Queda eliminado.");
 
         // 1. Lo eliminamos de la partida (0 vidas)
         if (playerIndex < vidas.Length) vidas[playerIndex] = 0;
-        
+
         // 2. RECUPERAR CARTAS A LA BARAJA
         if (playerIndex < playerHands.Count && playerHands[playerIndex] != null)
         {
@@ -132,29 +132,29 @@ private void ControlarDesconexion(ulong clientId)
 
         if (jugadoresVivos <= 1)
         {
-            isPaused = true; 
+            isPaused = true;
             TerminarPartidaPorAbandonoClientRpc(posibleGanador);
-            return; 
+            return;
         }
 
-        
+
         if (BettingManager.Instance != null && BettingManager.Instance.panelRoot.activeSelf)
         {
             BettingManager.Instance.FuerzaPasarTurnoDesconectado(playerIndex);
         }
-        
+
         else if (currentTurnIndex == playerIndex)
         {
             ChangeTurn();
         }
     }
-[Rpc(SendTo.Everyone)]
+    [Rpc(SendTo.Everyone)]
     private void SincronizarDesconexionClientRpc(int idJugadorQueSeFue)
     {
         vidas[idJugadorQueSeFue] = 0;
         SetInfoMessage($"El Jugador {idJugadorQueSeFue} se ha desconectado.");
         ActualizarTodosLosPerfilesUI();
-        
+
         // Cada cliente comprueba si, al irse este, él se ha quedado solo en la sala
         int humanosVivos = 0;
         for (int i = 0; i < totalPlayers; i++)
@@ -182,7 +182,7 @@ private void ControlarDesconexion(ulong clientId)
     {
         isPaused = true;
         int localId = (int)NetworkManager.Singleton.LocalClientId;
-        
+
         // Si yo soy el ganador (el que se ha quedado en la sala)
         if (localId == ganadorIndex)
         {
@@ -193,7 +193,7 @@ private void ControlarDesconexion(ulong clientId)
         if (PauseManager.Instance != null)
         {
             // Te damos el puesto 1 si eres el ganador, o un puesto peor si fueras otro
-            int puesto = (localId == ganadorIndex) ? 1 : 2; 
+            int puesto = (localId == ganadorIndex) ? 1 : 2;
             PauseManager.Instance.TriggerGameOver(puesto);
         }
     }
@@ -201,7 +201,7 @@ private void ControlarDesconexion(ulong clientId)
     private IEnumerator EsperarYGenerar(int numJugadores)
     {
         yield return new WaitUntil(() => TableManagerLayout.Instance != null);
-        yield return new WaitForSeconds(0.2f); 
+        yield return new WaitForSeconds(0.2f);
         ArrancarMesaLocal(numJugadores);
     }
 
@@ -210,7 +210,7 @@ private void ControlarDesconexion(ulong clientId)
         Debug.Log($"Soy el ID {NetworkManager.Singleton.LocalClientId} y voy a generar mesa para {numJugadores}");
         IniciarPartidaEnRed(numJugadores);
     }
-    
+
     public void IniciarPartidaEnRed(int totalJugadoresEnSala)
     {
         if (TableManagerLayout.Instance != null)
@@ -230,19 +230,19 @@ private void ControlarDesconexion(ulong clientId)
 
                 for (int i = 0; i < totalPlayers; i++)
                 {
-                    vidas[i] = 3; 
+                    vidas[i] = 3;
                     apuestas[i] = -1;
                     bazasGanadas[i] = 0;
                 }
 
                 if (IsServer) //Sorteo de quien empieza al principio
                 {
-                   
+
                     int sorteo = Random.Range(0, totalPlayers);
-                    
+
                     // Asignamos el resultado al manoMesaIndex
                     manoMesaIndex = sorteo;
-                    
+
                     // El turno actual empieza siendo el del elegido
                     currentTurnIndex = manoMesaIndex;
 
@@ -268,13 +268,13 @@ private void ControlarDesconexion(ulong clientId)
         if (!IsServer) return; // Solo el host cambia de turno
 
         int limitador = 0;
-        do 
+        do
         {
             currentTurnIndex = (currentTurnIndex + 1) % totalPlayers;
             limitador++;
-            if (limitador > totalPlayers) break; 
-        } 
-        while (vidas[currentTurnIndex] <= 0); 
+            if (limitador > totalPlayers) break;
+        }
+        while (vidas[currentTurnIndex] <= 0);
 
         SincronizarTurnoClientRpc(currentTurnIndex);
     }
@@ -291,8 +291,8 @@ private void ControlarDesconexion(ulong clientId)
     {
         currentTurnIndex = nuevoTurno;
         int localId = (int)NetworkManager.Singleton.LocalClientId;
-        
-        
+
+
         if (vidas[currentTurnIndex] <= 0)
         {
             currentState = GameState.WAITING;
@@ -320,18 +320,18 @@ private void ControlarDesconexion(ulong clientId)
         if (!IsServer) return; // Solo el Host avanza de ronda
 
         currentRoundCards += roundDelta;
-        if(currentRoundCards <= 1) { currentRoundCards = 1; roundDelta = 1; }
-        else if(currentRoundCards >= 5) { currentRoundCards = 5; roundDelta = -1; }
+        if (currentRoundCards <= 1) { currentRoundCards = 1; roundDelta = 1; }
+        else if (currentRoundCards >= 5) { currentRoundCards = 5; roundDelta = -1; }
 
         int limitador = 0;
-        do 
+        do
         {
             manoMesaIndex = (manoMesaIndex + 1) % totalPlayers;
             limitador++;
-            if (limitador > totalPlayers) break; 
-        } 
+            if (limitador > totalPlayers) break;
+        }
         while (vidas[manoMesaIndex] <= 0);
-        
+
         AvanzarRondaClientRpc(currentRoundCards, manoMesaIndex);
     }
 
@@ -341,7 +341,7 @@ private void ControlarDesconexion(ulong clientId)
         currentRoundCards = nuevasCartas;
         manoMesaIndex = nuevoMano;
         currentTurnIndex = manoMesaIndex;
-        
+
         Debug.Log($"<color=orange>PRÓXIMA RONDA: {currentRoundCards} CARTAS</color>");
     }
 
@@ -352,7 +352,7 @@ private void ControlarDesconexion(ulong clientId)
     {
         int localId = (int)NetworkManager.Singleton.LocalClientId;
         bool isMyCard = card.transform.parent == playerHands[localId].transform;
-        
+
         // Si soy un humano en mi turno
         bool canSelectAsHuman = (currentState == GameState.PLAYER_TURN && isMyCard);
         // Si el Servidor está controlando un Bot (solo el Host puede hacer esto)
@@ -363,7 +363,7 @@ private void ControlarDesconexion(ulong clientId)
             if (SelectedCard == card)
             {
                 ClearSelection();
-                return; 
+                return;
             }
 
             if (SelectedCard != null) SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
@@ -400,12 +400,12 @@ private void ControlarDesconexion(ulong clientId)
         {
             group.interactable = active;
             group.blocksRaycasts = active;
-            group.alpha = 1f; 
+            group.alpha = 1f;
             foreach (Transform childCard in group.transform)
             {
                 CanvasGroup cardGroup = childCard.GetComponent<CanvasGroup>();
                 if (cardGroup == null) cardGroup = childCard.gameObject.AddComponent<CanvasGroup>();
-                cardGroup.alpha = active ? 1f : alpha; 
+                cardGroup.alpha = active ? 1f : alpha;
             }
         }
     }
@@ -416,7 +416,7 @@ private void ControlarDesconexion(ulong clientId)
     IEnumerator AITurnRoutine()
     {
         Debug.Log($"🤖 IA {currentTurnIndex}: Pensando jugada...");
-        yield return new WaitForSeconds(1.5f); 
+        yield return new WaitForSeconds(1.5f);
 
         List<Card> cardsOnTable = new List<Card>();
         if (TableZone.Instance != null)
@@ -436,7 +436,7 @@ private void ControlarDesconexion(ulong clientId)
         }
 
         int currentWins = bazasGanadas[currentTurnIndex];
-        int targetBet = apuestas[currentTurnIndex]; 
+        int targetBet = apuestas[currentTurnIndex];
 
         UICard cardToPlay = AIController.Instance.ChooseCardToPlay(aiHand, cardsOnTable, currentWins, targetBet);
 
@@ -444,9 +444,9 @@ private void ControlarDesconexion(ulong clientId)
         {
             Debug.Log($"🤖 IA {currentTurnIndex}: Juega {cardToPlay.cardData.rank} de {cardToPlay.cardData.suit}");
             cardToPlay.SetFaceUp(true);
-            SelectCard(cardToPlay); 
-            
-            yield return new WaitForSeconds(0.5f); 
+            SelectCard(cardToPlay);
+
+            yield return new WaitForSeconds(0.5f);
             TableZone.Instance.OnPointerClick(null);
         }
     }
@@ -464,11 +464,11 @@ private void ControlarDesconexion(ulong clientId)
         yield return new WaitForSeconds(1.0f);
         RevelarCartasCiegasClientRpc();
 
-        yield return new WaitForSeconds(1.5f); 
+        yield return new WaitForSeconds(1.5f);
 
         int maxScore = -1;
         int winnerIndex = -1;
-        List<UICard> cartasJugadas = new List<UICard>(); 
+        List<UICard> cartasJugadas = new List<UICard>();
 
         for (int i = 0; i < playerHands.Count; i++)
         {
@@ -488,18 +488,34 @@ private void ControlarDesconexion(ulong clientId)
 
         if (winnerIndex != -1)
         {
-            bazasGanadas[winnerIndex]++; 
+            bazasGanadas[winnerIndex]++;
             SincronizarGanadorBazaClientRpc(winnerIndex, bazasGanadas[winnerIndex]);
         }
 
-        TableZone.Instance.bazasJugadas = 1; 
+        TableZone.Instance.bazasJugadas = 1;
         yield return new WaitForSeconds(1.5f);
 
         // Mover cartas a la mesa en el servidor antes de forzar análisis
         foreach (UICard c in cartasJugadas) c.transform.SetParent(TableZone.Instance.transform);
+        MoverCartasCiegasAMesaClientRpc();
         TableZone.Instance.ForceEndRoundAnalysis();
     }
-
+    [Rpc(SendTo.Everyone)]
+    private void MoverCartasCiegasAMesaClientRpc()
+    {
+        // Todos los ordenadores cogen la carta de la mano y la tiran a la mesa central
+        for (int i = 0; i < playerHands.Count; i++)
+        {
+            if (playerHands[i].transform.childCount > 0)
+            {
+                Transform card = playerHands[i].transform.GetChild(0);
+                card.SetParent(TableZone.Instance.transform);
+                card.localPosition = Vector3.zero;
+                card.localScale = new Vector3(0.85f, 0.85f, 0.85f);
+                card.localEulerAngles = Vector3.zero;
+            }
+        }
+    }
     [Rpc(SendTo.Everyone)]
     private void RevelarCartasCiegasClientRpc()
     {
@@ -519,11 +535,11 @@ private void ControlarDesconexion(ulong clientId)
     {
         bazasGanadas[winnerIndex] = totalBazasDelGanador;
         int localId = (int)NetworkManager.Singleton.LocalClientId;
-        
+
         if (winnerIndex == localId) SetInfoMessage("¡TÚ TIENES LA CARTA MÁS ALTA!");
         else SetInfoMessage($"¡EL JUGADOR {winnerIndex} TIENE LA CARTA MÁS ALTA!");
-        
-        ActualizarTodosLosPerfilesUI(); 
+
+        ActualizarTodosLosPerfilesUI();
     }
 
     // ========================================================================

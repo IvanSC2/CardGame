@@ -92,7 +92,7 @@ public class BettingManager : NetworkBehaviour
 
         // Calcular apuesta prohibida (solo afecta al último)
         int forbiddenBet = -1;
-        if (isLastToBet) 
+        if (isLastToBet && cardsInRound > 1) 
         {
             int sumBets = 0;
             for(int i = 0; i < totalPlayers; i++) 
