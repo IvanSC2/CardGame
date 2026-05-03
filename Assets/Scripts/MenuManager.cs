@@ -1,13 +1,13 @@
 using UnityEngine;
-using TMPro; // Necesario para los textos de Premio y Precio
+using TMPro; 
 
 public class MenuManager : MonoBehaviour
 {
-    // Singleton para llamarlo desde otros scripts (ej: al ganar la partida)
     public static MenuManager Instance;
 
     [Header("1. HUB Central")]
     public GameObject panelHub;
+    public GameObject pToolBar;
     
     [Header("2. Perfil & Stats")]
     public GameObject panelProfile;
@@ -20,23 +20,23 @@ public class MenuManager : MonoBehaviour
     public OptionController practicePlayers;
     public OptionController practiceTime;
     public OptionController practiceBotAI;
-    public TMP_Text textoPremioPractica; // El texto del premio
+    public TMP_Text textoPremioPractica; 
 
     [Header("4B. Modo Público (Matchmaking)")]
     public GameObject panelMatchmakingLobby;
 
     [Header("4C. Modo Privado (Private)")]
     public GameObject panelPrivateChoice;  
-    public GameObject panelPrivateCreate;  
-    public GameObject panelPrivateJoin;    
+    public GameObject panelPrivateJoin;   
     public GameObject panelPrivateLobby;   
+    public GameObject panelClientLobby;    
     
     [Header("Selectores Modo Privado")]
     public OptionController privatePlayers;
     public OptionController privateTime;
     public OptionController privateDifficulty;
     public OptionController privateEntryFee;
-    public TMP_Text textoPrecioPrivada; // El texto del coste de entrada
+    public TMP_Text textoPrecioPrivada; 
 
     private void Awake()
     {
@@ -48,43 +48,48 @@ public class MenuManager : MonoBehaviour
     {
         MostrarHub();
         
-        // Calculamos los números iniciales al arrancar para que no salgan vacíos
         if(practicePlayers != null) CalcularPremioPractica();
         if(privatePlayers != null) CalcularPremioPrivada();
     }
 
     // --- MÁQUINA DE ESTADOS ---
 
-    public void MostrarHub() { ApagarTodosLosPaneles(); panelHub.SetActive(true); }
-    public void MostrarPerfil() { ApagarTodosLosPaneles(); panelProfile.SetActive(true); }
-    public void MostrarTienda() { ApagarTodosLosPaneles(); panelShop.SetActive(true); }
+    public void MostrarHub() { ApagarTodosLosPaneles(); if(panelHub != null) panelHub.SetActive(true); pToolBar.SetActive(true);}
+    public void MostrarPerfil() { ApagarTodosLosPaneles(); if(panelProfile != null) panelProfile.SetActive(true); }
+    public void MostrarTienda() { ApagarTodosLosPaneles(); if(panelShop != null) panelShop.SetActive(true); }
 
-    public void IniciarFlujoPractica() { ApagarTodosLosPaneles(); panelPractice.SetActive(true); }
-    public void IniciarFlujoPublico() { ApagarTodosLosPaneles(); panelMatchmakingLobby.SetActive(true); }
-    public void IniciarFlujoPrivado() { ApagarTodosLosPaneles(); panelPrivateChoice.SetActive(true); }
+    public void IniciarFlujoPractica() { ApagarTodosLosPaneles(); if(panelPractice != null) panelPractice.SetActive(true); }
+    public void IniciarFlujoPublico() { ApagarTodosLosPaneles(); if(panelMatchmakingLobby != null) panelMatchmakingLobby.SetActive(true); }
+    
+    // Al pulsar "Private" en el Hub, venimos aquí:
+    public void IniciarFlujoPrivado() { ApagarTodosLosPaneles(); if(panelPrivateChoice != null) panelPrivateChoice.SetActive(true); }
 
-    public void MostrarPrivateCreate() { ApagarTodosLosPaneles(); panelPrivateCreate.SetActive(true); }
-    public void MostrarPrivateJoin() { ApagarTodosLosPaneles(); panelPrivateJoin.SetActive(true); }
-    public void MostrarPrivateLobby() { ApagarTodosLosPaneles(); panelPrivateLobby.SetActive(true); }
+    // Al pulsar "Join" en pPrivate, venimos aquí:
+    public void MostrarPrivateJoin() { ApagarTodosLosPaneles(); if(panelPrivateJoin != null) panelPrivateJoin.SetActive(true); }
+    
+    // Al pulsar "Create" (tras cargar la red), venimos aquí:
+    public void MostrarPrivateLobby() { ApagarTodosLosPaneles(); if(panelPrivateLobby != null) panelPrivateLobby.SetActive(true); }
+    
+    // Al pulsar "Join" (tras buscar el código), venimos aquí:
+    public void MostrarClientLobby() { ApagarTodosLosPaneles(); if(panelClientLobby != null) panelClientLobby.SetActive(true); } 
 
     private void ApagarTodosLosPaneles()
     {
-        panelHub.SetActive(false);
-        panelProfile.SetActive(false);
-        panelShop.SetActive(false);
-        panelPractice.SetActive(false);
-        //panelMatchmakingLobby.SetActive(false);
-        panelPrivateChoice.SetActive(false);
-        //panelPrivateCreate.SetActive(false);
-        //panelPrivateJoin.SetActive(false);
-        //panelPrivateLobby.SetActive(false);
+        if (panelHub != null) panelHub.SetActive(false);
+        if (panelProfile != null) panelProfile.SetActive(false);
+        if (panelShop != null) panelShop.SetActive(false);
+        if (panelPractice != null) panelPractice.SetActive(false);
+        if (panelMatchmakingLobby != null) panelMatchmakingLobby.SetActive(false);
+        if (panelPrivateChoice != null) panelPrivateChoice.SetActive(false);
+        if (panelPrivateJoin != null) panelPrivateJoin.SetActive(false);
+        if (panelPrivateLobby != null) panelPrivateLobby.SetActive(false);
+        if (panelClientLobby != null) panelClientLobby.SetActive(false);
     }
 
-    // ECONOMÍA DINÁMICA 
+    // --- ECONOMÍA DINÁMICA ---
 
     public void CalcularPremioPractica()
     {
-      
         if (practicePlayers == null || textoPremioPractica == null) return;
 
         int premioBase = 50;
@@ -97,31 +102,25 @@ public class MenuManager : MonoBehaviour
         textoPremioPractica.text = premioTotal.ToString();
     }
 
-    public void CalcularPremioPrivada()
+    public int ObtenerPremioPrivadaCalculado()
     {
-        
-        if (privateEntryFee == null || privatePlayers == null || textoPrecioPrivada == null) return;
+        if (privateEntryFee == null || privatePlayers == null) return 0;
 
-        // Entry Fee
-        
         string textoFee = privateEntryFee.opciones[privateEntryFee.ObtenerIndice()];
         int entryFee = int.Parse(textoFee);
+        int cantidadJugadores = privatePlayers.ObtenerIndice() + 2;
 
-        // Cantidad de jugadores 
-        
-        int cantidadJugadores = privatePlayers.ObtenerIndice() + 2; 
-
-        // Ligeros Bonus (Para que no rompan la economía, solo dan un pellizco extra)
-        // Tiempo: Índice 0 (15s) da +30, Índice 1 (30s) da +15, Índice 2 (60s) da +0.
-        int bonusTiempo = (2 - privateTime.ObtenerIndice()) * 15; 
-        
-        // IA: Índice 0 (Easy) da +0, Índice 1 (Normal) da +20, Índice 2 (Imposible) da +40.
+        int bonusTiempo = (2 - privateTime.ObtenerIndice()) * 15;
         int bonusIA = privateDifficulty.ObtenerIndice() * 20;
 
-        // Cálculo Final: (Jugadores * Fee) + Bonus
-        int premioTotal = (cantidadJugadores * entryFee) + bonusTiempo + bonusIA;
+        return (cantidadJugadores * entryFee) + bonusTiempo + bonusIA;
+    }
 
-        // Actualizamos el texto en pantalla
-        textoPrecioPrivada.text = premioTotal.ToString();
+    public void CalcularPremioPrivada()
+    {
+        if (textoPrecioPrivada != null)
+        {
+            textoPrecioPrivada.text = ObtenerPremioPrivadaCalculado().ToString();
+        }
     }
 }

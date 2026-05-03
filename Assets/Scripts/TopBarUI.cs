@@ -41,7 +41,11 @@ public class TopBarUI : MonoBehaviour
         ActualizarPantalla();
     }
 
-    
+    // Añadir en TopBarUI.cs
+    public bool TieneSuficientes(int coste)
+    {
+        return monedasActuales >= coste;
+    }    
     public bool GastarMonedas(int coste)
     {
         if (monedasActuales >= coste)

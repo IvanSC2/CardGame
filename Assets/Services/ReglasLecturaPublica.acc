@@ -1,0 +1,13 @@
+{
+  "statements": [
+    {
+      "Sid": "PermitirLecturaGlobalSalas",
+      "Effect": "Allow",
+      "Action": [
+        "Read"
+      ],
+      "Principal": "Player",
+      "Resource": "urn:ugs:cloud-save:/*"
+    }
+  ]
+}
