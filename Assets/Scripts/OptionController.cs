@@ -58,4 +58,13 @@ public class OptionController : MonoBehaviour
             ActualizarPantalla();
         }
     }
+
+    public void ResetearComponente()
+    {
+        if (opciones == null || opciones.Length == 0) return;
+        
+        indiceActual = 0; 
+        ActualizarPantalla(); 
+    }
+    
 }

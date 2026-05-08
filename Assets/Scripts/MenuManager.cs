@@ -54,7 +54,19 @@ public class MenuManager : MonoBehaviour
 
     // --- MÁQUINA DE ESTADOS ---
 
-    public void MostrarHub() { ApagarTodosLosPaneles(); if(panelHub != null) panelHub.SetActive(true); pToolBar.SetActive(true);}
+    public void MostrarHub() 
+    { 
+        ApagarTodosLosPaneles(); 
+        if(panelHub != null) panelHub.SetActive(true); 
+        pToolBar.SetActive(true);
+        
+        // Disparamos la limpieza global de la UI Privada
+        MenuLobbyUI menuLobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
+        if (menuLobbyUI != null)
+        {
+            menuLobbyUI.ResetearLobbyCompleto();
+        }
+    }
     public void MostrarPerfil() { ApagarTodosLosPaneles(); if(panelProfile != null) panelProfile.SetActive(true); }
     public void MostrarTienda() { ApagarTodosLosPaneles(); if(panelShop != null) panelShop.SetActive(true); }
 
@@ -102,6 +114,74 @@ public class MenuManager : MonoBehaviour
         textoPremioPractica.text = premioTotal.ToString();
     }
 
+    // =======================================================
+    // --- FLUJO MODO PRÁCTICA (HOST LOCAL OFFLINE) ---
+    // =======================================================
+    public void IniciarPartidaPractica()
+    {
+        // 1. Extraemos los valores de los selectores de la UI
+        int maxJugadores = practicePlayers.ObtenerIndice() + 2; // +2 porque el índice 0 equivale a 1v1 (2 jugadores)
+        int dificultadBot = practiceBotAI.ObtenerIndice();
+        
+        // (Opcional) Si quieres implementar el tiempo por turno en Práctica en el futuro
+        // string tiempoStr = practiceTime.opciones[practiceTime.ObtenerIndice()].Replace("s", "");
+        // int turnTime = int.Parse(tiempoStr);
+
+        // 2. Guardamos en el GameConfig (Memoria Persistente)
+        GameConfig.nPlayers = maxJugadores;
+        GameConfig.difficulty = dificultadBot;
+
+        Debug.Log($"[PRÁCTICA] Iniciando Host Local: {maxJugadores} Jugadores, Dificultad IA: {dificultadBot}");
+
+        // 3. Arrancamos el motor de red en modo HOST y cargamos la escena directamente
+        if (Unity.Netcode.NetworkManager.Singleton != null)
+        {
+            // Limpiamos la baraja por seguridad antes de cambiar de escena
+            if (CardDatabase.deck != null) CardDatabase.deck.Clear();
+            
+            Unity.Netcode.NetworkManager.Singleton.StartHost();
+            Unity.Netcode.NetworkManager.Singleton.SceneManager.LoadScene("MainGame", UnityEngine.SceneManagement.LoadSceneMode.Single);
+        }
+        else
+        {
+            Debug.LogError("Error: NetworkManager.Singleton no existe. Asegúrate de que el NetworkManager está en la escena Hub.");
+        }
+    }
+    // =======================================================
+    // --- FLUJO MODO PÚBLICO (MATCHMAKING) ---
+    // =======================================================
+    public async void IntentarMatchmaking()
+    {
+        int feeMatchmaking = 500; // El coste fijo por entrar a partidas públicas
+
+        if (TopBarUI.Instance != null && !TopBarUI.Instance.TieneSuficientes(feeMatchmaking))
+        {
+            Debug.LogWarning("No tienes dinero suficiente para el Matchmaking.");
+            return;
+        }
+
+        Debug.Log("[MATCHMAKING] Saldo validado. Abriendo panel inmediatamente...");
+        
+        // 1. ABRIMOS EL PANEL AL INSTANTE (Antes de tocar la red)
+        IniciarFlujoPublico();
+        
+        
+        MenuLobbyUI lobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
+        if (lobbyUI != null && lobbyUI.txtJugadoresMatchmaking != null)
+        {
+            lobbyUI.txtJugadoresMatchmaking.text = "Buscando...";
+            if (lobbyUI.txtListaNombresMatchmaking != null) lobbyUI.txtListaNombresMatchmaking.text = "";
+        }
+
+        GameConfig.nPlayers = 4; 
+        GameConfig.difficulty = 0; 
+
+        if (SessionNetworkManager.Instance != null)
+        {
+            // 2. Ejecutamos la búsqueda pesada en segundo plano
+            await SessionNetworkManager.Instance.IniciarMatchmakingPublico(feeMatchmaking);
+        }
+    }
     public int ObtenerPremioPrivadaCalculado()
     {
         if (privateEntryFee == null || privatePlayers == null) return 0;
