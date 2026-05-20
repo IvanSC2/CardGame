@@ -4,6 +4,14 @@ public static class GameConfig
 {
     //1 para jugar contra 1 bot, 2 para jugar contra 2 etc
     public static int nPlayers=1;
+    public static int nHumanPlayers=1;
+
+    // MONETIZACIÓN POST-PARTIDA
+    public static int currentFee = 0;
+    public static int currentPrize = 0;
+    public static bool isPrivateMatch = false;
+    public static bool isHostLobby = false;
+    public static bool prizeAwarded = false;
 
     //0: Version ultra facil
     //1: Normal Mode por default

@@ -1,5 +1,6 @@
 using UnityEngine;
 using TMPro; 
+using UnityEngine.UI;
 
 public class MenuManager : MonoBehaviour
 {
@@ -8,6 +9,7 @@ public class MenuManager : MonoBehaviour
     [Header("1. HUB Central")]
     public GameObject panelHub;
     public GameObject pToolBar;
+    public Button bBack; //
     
     [Header("2. Perfil & Stats")]
     public GameObject panelProfile;
@@ -24,6 +26,7 @@ public class MenuManager : MonoBehaviour
 
     [Header("4B. Modo Público (Matchmaking)")]
     public GameObject panelMatchmakingLobby;
+    public Button bLeave;
 
     [Header("4C. Modo Privado (Private)")]
     public GameObject panelPrivateChoice;  
@@ -37,6 +40,8 @@ public class MenuManager : MonoBehaviour
     public OptionController privateDifficulty;
     public OptionController privateEntryFee;
     public TMP_Text textoPrecioPrivada; 
+
+    private MenuLobbyUI _cachedMenuLobbyUI;
 
     private void Awake()
     {
@@ -59,19 +64,20 @@ public class MenuManager : MonoBehaviour
         ApagarTodosLosPaneles(); 
         if(panelHub != null) panelHub.SetActive(true); 
         pToolBar.SetActive(true);
+        bBack.gameObject.SetActive(true);
         
         // Disparamos la limpieza global de la UI Privada
-        MenuLobbyUI menuLobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
-        if (menuLobbyUI != null)
+        if (_cachedMenuLobbyUI == null) _cachedMenuLobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
+        if (_cachedMenuLobbyUI != null)
         {
-            menuLobbyUI.ResetearLobbyCompleto();
+            _cachedMenuLobbyUI.ResetearLobbyCompleto();
         }
     }
     public void MostrarPerfil() { ApagarTodosLosPaneles(); if(panelProfile != null) panelProfile.SetActive(true); }
     public void MostrarTienda() { ApagarTodosLosPaneles(); if(panelShop != null) panelShop.SetActive(true); }
 
     public void IniciarFlujoPractica() { ApagarTodosLosPaneles(); if(panelPractice != null) panelPractice.SetActive(true); }
-    public void IniciarFlujoPublico() { ApagarTodosLosPaneles(); if(panelMatchmakingLobby != null) panelMatchmakingLobby.SetActive(true); }
+    public void IniciarFlujoPublico() { ApagarTodosLosPaneles(); if(panelMatchmakingLobby != null) panelMatchmakingLobby.SetActive(true); bBack.gameObject.SetActive(false); }
     
     // Al pulsar "Private" en el Hub, venimos aquí:
     public void IniciarFlujoPrivado() { ApagarTodosLosPaneles(); if(panelPrivateChoice != null) panelPrivateChoice.SetActive(true); }
@@ -123,7 +129,7 @@ public class MenuManager : MonoBehaviour
         int maxJugadores = practicePlayers.ObtenerIndice() + 2; // +2 porque el índice 0 equivale a 1v1 (2 jugadores)
         int dificultadBot = practiceBotAI.ObtenerIndice();
         
-        // (Opcional) Si quieres implementar el tiempo por turno en Práctica en el futuro
+        // implementar el tiempo por turno en Práctica en el futuro
         // string tiempoStr = practiceTime.opciones[practiceTime.ObtenerIndice()].Replace("s", "");
         // int turnTime = int.Parse(tiempoStr);
 
@@ -152,7 +158,7 @@ public class MenuManager : MonoBehaviour
     // =======================================================
     public async void IntentarMatchmaking()
     {
-        int feeMatchmaking = 500; // El coste fijo por entrar a partidas públicas
+        int feeMatchmaking = 200; // El coste fijo por entrar a partidas públicas
 
         if (TopBarUI.Instance != null && !TopBarUI.Instance.TieneSuficientes(feeMatchmaking))
         {
@@ -166,14 +172,15 @@ public class MenuManager : MonoBehaviour
         IniciarFlujoPublico();
         
         
-        MenuLobbyUI lobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
-        if (lobbyUI != null && lobbyUI.txtJugadoresMatchmaking != null)
+        
+        if (_cachedMenuLobbyUI == null) _cachedMenuLobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
+        if (_cachedMenuLobbyUI != null && _cachedMenuLobbyUI.txtJugadoresMatchmaking != null)
         {
-            lobbyUI.txtJugadoresMatchmaking.text = "Buscando...";
-            if (lobbyUI.txtListaNombresMatchmaking != null) lobbyUI.txtListaNombresMatchmaking.text = "";
+            _cachedMenuLobbyUI.txtJugadoresMatchmaking.text = "Buscando...";
+            if (_cachedMenuLobbyUI.txtListaNombresMatchmaking != null) _cachedMenuLobbyUI.txtListaNombresMatchmaking.text = "";
         }
 
-        GameConfig.nPlayers = 4; 
+        //GameConfig.nPlayers = 4; 
         GameConfig.difficulty = 0; 
 
         if (SessionNetworkManager.Instance != null)

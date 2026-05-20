@@ -3,16 +3,23 @@ using Unity.Netcode;
 using Unity.Services.Core;
 using Unity.Services.Authentication;
 using Unity.Services.Multiplayer;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using Unity.Services.CloudCode;
 using Unity.Services.CloudSave;
+using UnityEngine.UI;
 
 public class SessionNetworkManager : MonoBehaviour
 {
     public static SessionNetworkManager Instance;
 
     public ISession currentSession;
+    private CancellationTokenSource matchmakingCts;
+    public Button bLeave;
+
+    // Evita que OnSessionDeleted y OnHostChanged se ejecuten a la vez
+    private bool _expulsandoAlHub = false;
 
     private async void Awake()
     {
@@ -25,8 +32,9 @@ public class SessionNetworkManager : MonoBehaviour
             {
                 Debug.Log("[1/3] Inicializando UGS...");
                 InitializationOptions options = new InitializationOptions();
+#if UNITY_EDITOR
                 options.SetProfile("Jugador_" + System.Guid.NewGuid().ToString().Substring(0, 6));
-
+#endif
                 await UnityServices.InitializeAsync(options);
                 Debug.Log("[2/3] UGS Inicializado correctamente.");
             }
@@ -35,43 +43,51 @@ public class SessionNetworkManager : MonoBehaviour
             {
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
                 Debug.Log($"[3/3] Autenticado en la nube. PlayerID: {AuthenticationService.Instance.PlayerId}");
+
+                if (TopBarUI.Instance != null) await TopBarUI.Instance.CargarEconomiaNube();
+                await SincronizarNoAds();
             }
         }
         catch (System.Exception e) { Debug.LogError($"Error grave al arrancar UGS: {e.Message}"); }
     }
 
     // =========================================================================
-    // 1. HOST: CREAR LA SALA PRIVADA Y PUBLICARLA EN CLOUD SAVE
+    // 1. HOST: CREAR LA SALA PRIVADA
     // =========================================================================
     public async Task<string> CrearSalaPrivada(int maxPlayers, int entryFee, int prizeTotal, int difficulty, int turnTime)
     {
+        if (currentSession != null)
+        {
+            Debug.LogWarning("⚠️ Se ha detectado una sesión previa sin cerrar. Destruyéndola antes de crear una nueva...");
+            await AbandonarSala();
+            await Task.Delay(500);
+        }
+
         try
         {
             var sessionOptions = new SessionOptions
             {
                 MaxPlayers = maxPlayers,
                 IsPrivate = true
-            };
-            sessionOptions.WithNetworkOptions(new NetworkOptions());
+            }.WithRelayNetwork();
 
             string roomName = System.Guid.NewGuid().ToString();
             currentSession = await MultiplayerService.Instance.CreateOrJoinSessionAsync(roomName, sessionOptions);
 
             string codigoGenerado = currentSession.Code;
+
+            
+            currentSession.Deleted += OnSessionDeleted;
+            currentSession.SessionHostChanged += OnHostChanged;
+
             if (currentSession.IsHost)
             {
                 string jsonPayload = $"{{\"joinCode\":\"{codigoGenerado}\", \"price\":{entryFee}, \"prize\":{prizeTotal}}}";
-
-                var argumentos = new Dictionary<string, object>
-                {
-                    { "payload", jsonPayload }
-                };
+                var argumentos = new Dictionary<string, object> { { "payload", jsonPayload } };
 
                 try
                 {
-                    Debug.Log($"[CLOUD] Enviando paquete Trojan Horse para la sala: {codigoGenerado}");
                     await CloudCodeService.Instance.CallEndpointAsync("PublishLobbyPreview", argumentos);
-                    Debug.Log($"[CLOUD] ¡Éxito! Script JS ejecutado y barrera superada.");
                 }
                 catch (System.Exception ex)
                 {
@@ -96,7 +112,6 @@ public class SessionNetworkManager : MonoBehaviour
     // =========================================================================
     // 2. CLIENTE (SEARCH): PREVISUALIZAR SIN ENSUCIAR EL LOBBY
     // =========================================================================
-
     [System.Serializable]
     public class LobbyMetadata { public int entryPrice; public int totalPrize; public long creationTimestamp; }
 
@@ -105,18 +120,13 @@ public class SessionNetworkManager : MonoBehaviour
         try
         {
             string cleanCode = joinCode.Trim().ToUpper();
-            Debug.Log($"[CLOUD] Buscando sala: '{cleanCode}'");
-
             var queryResult = await CloudSaveService.Instance.Data.Custom.LoadAllAsync(cleanCode);
 
             if (queryResult.TryGetValue("lobby_metadata", out var metaItem))
             {
                 var settings = metaItem.Value.GetAs<LobbyMetadata>();
-                Debug.Log($"[CLOUD] ¡Éxito! Precio: {settings.entryPrice}, Premio: {settings.totalPrize}");
                 return (settings.entryPrice, settings.totalPrize);
             }
-
-            Debug.LogWarning($"[CLOUD] La sala no tiene metadatos.");
             return (-1, -1);
         }
         catch (System.Exception e) { Debug.LogError($"Error leyendo nube: {e.Message}"); return (-1, -1); }
@@ -129,7 +139,6 @@ public class SessionNetworkManager : MonoBehaviour
     {
         try
         {
-            Debug.Log($"[JOIN] Iniciando unión definitiva a la sesión: {joinCode}");
             var joinOptions = new JoinSessionOptions();
             joinOptions.WithNetworkOptions(new NetworkOptions());
 
@@ -142,10 +151,8 @@ public class SessionNetworkManager : MonoBehaviour
 
                 if (!NetworkManager.Singleton.IsClient && !NetworkManager.Singleton.IsServer)
                 {
-                    Debug.Log("[JOIN] Confirmado: Arrancando el motor NGO en modo Cliente...");
                     NetworkManager.Singleton.StartClient();
                 }
-                
                 return true;
             }
             return false;
@@ -158,86 +165,249 @@ public class SessionNetworkManager : MonoBehaviour
     }
 
     // =========================================================================
-    // 5. MATCHMAKING PÚBLICO (BUSCA O CREA 100% AUTOMATIZADO UNITY 6.2)
+    // 5. MATCHMAKING PÚBLICO (BLINDADO CONTRA ERROR 404)
     // =========================================================================
     public async Task IniciarMatchmakingPublico(int feeFijo)
     {
         int premioTotal = feeFijo * 4;
 
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            Debug.Log("[RED] Limpiando puerto de red zombi antes de buscar...");
+            NetworkManager.Singleton.Shutdown();
+            await Task.Delay(500); 
+        }
+
+        matchmakingCts?.Cancel();
+        matchmakingCts = new CancellationTokenSource(System.TimeSpan.FromSeconds(60));
+
+        MenuLobbyUI lobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
+
         try
         {
-            Debug.Log("[MATCHMAKING] Iniciando emparejamiento automatizado...");
+            Debug.Log("[MATCHMAKING] Iniciando emparejamiento por Tickets en la nube...");
+            
+            if (lobbyUI != null && lobbyUI.btnLeaveMatchmaking != null)
+                lobbyUI.btnLeaveMatchmaking.gameObject.SetActive(true);
 
-            var quickJoinOptions = new QuickJoinOptions
-            {
-                Filters = new List<FilterOption>
-                {
-                    new FilterOption(FilterField.AvailableSlots, "1", FilterOperation.GreaterOrEqual)
-                },
-                Timeout = System.TimeSpan.FromSeconds(10),
-                CreateSession = true 
-            };
-
-          
+            var matchmakerOptions = new MatchmakerOptions { QueueName = "PublicQueue" };
             var sessionOptions = new SessionOptions
             {
                 MaxPlayers = 4,
                 IsPrivate = false
             }.WithRelayNetwork(); 
 
-            // Ejecutamos la llamada unificada
-            currentSession = await MultiplayerService.Instance.MatchmakeSessionAsync(quickJoinOptions, sessionOptions);
+            // EJECUCIÓN
+            Debug.Log(">>> [TRAZA 1] Botón pulsado. Voy a pedirle el Matchmaking a la nube...");
+            currentSession = await MultiplayerService.Instance.MatchmakeSessionAsync(
+                matchmakerOptions, 
+                sessionOptions, 
+                matchmakingCts.Token
+            );
+            Debug.Log(">>> [TRAZA 2] La nube ha respondido y currentSession existe.");
+
+            if (lobbyUI != null && lobbyUI.btnLeaveMatchmaking != null)
+                lobbyUI.btnLeaveMatchmaking.gameObject.SetActive(false);
 
             currentSession.Deleted += OnSessionDeleted;
             currentSession.SessionHostChanged += OnHostChanged;
 
             if (currentSession.IsHost)
             {
-                Debug.Log("[MATCHMAKING] Eres Host. Red levantada automáticamente por el SDK.");
-                
                 string jsonPayload = $"{{\"joinCode\":\"{currentSession.Code}\", \"price\":{feeFijo}, \"prize\":{premioTotal}}}";
                 var argumentos = new Dictionary<string, object> { { "payload", jsonPayload } };
-                try { await CloudCodeService.Instance.CallEndpointAsync("PublishLobbyPreview", argumentos); } catch { }
+                try { await CloudCodeService.Instance.CallEndpointAsync("PublishLobbyPreview", argumentos); } catch(System.Exception e) {Debug.LogError($">>> [TRAZA FATAL] El código ha petado aquí. Motivo: {e.Message}"); }
+            }
+            
+            // MONETIZACIÓN: Configuramos la partida (Pública)
+            GameConfig.currentFee = feeFijo;
+            GameConfig.currentPrize = premioTotal;
+            GameConfig.isPrivateMatch = false;
+            GameConfig.isHostLobby = currentSession.IsHost;
+            GameConfig.prizeAwarded = false;
+
+            Debug.Log(">>> [TRAZA 3] Rol asignado. Voy a llamar a MenuManager.IniciarFlujoPublico()...");
+            MenuManager.Instance.IniciarFlujoPublico();
+            
+        }
+       
+        
+        catch (Unity.Services.Core.RequestFailedException e)
+        {
+            if (e.Message.Contains("404") || e.Message.Contains("EntityNotFound"))
+            {
+                Debug.LogWarning("[MATCHMAKING RED] UGS devolvió un Ticket Huérfano (404). Purgando estado...");
+                currentSession = null;
+                if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
             }
             else
             {
-                Debug.Log("[MATCHMAKING] Eres Cliente. Conexión de red gestionada por el SDK.");
+                Debug.LogError($"[MATCHMAKING-ERROR] Fallo crítico Multiplayer: {e.Message}");
+                await AbandonarSala(true);
+                if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
             }
-
-            // Mostramos la interfaz (El cliente ya se está conectando por detrás)
-            MenuManager.Instance.IniciarFlujoPublico();
+        }
+        catch (System.OperationCanceledException)
+        {
+            Debug.LogWarning("[MATCHMAKING] Búsqueda cancelada por el usuario o tiempo agotado.");
+            if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
         }
         catch (SessionException e)
         {
-            Debug.LogError($"[MATCHMAKING-ERROR] Error crítico: {e.Message}");
+           
+            bool esTicketHuerfano = e.Message.Contains("404")
+                                 || e.Message.Contains("EntityNotFound")
+                                 || e.Message.Contains("fetching Matchmaking Results")
+                                 || e.Message.Contains("fetching matchmaking");
+
+            if (esTicketHuerfano)
+            {
+                Debug.LogWarning("[MATCHMAKING] Ticket huérfano detectado (SessionException 404). Purgando y reintentando en 2s...");
+
+                // Limpieza de estado sin tocar red (la sesión ya está muerta en UGS)
+                currentSession = null;
+                if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+                    NetworkManager.Singleton.Shutdown();
+
+                // Esperamos a que los sockets se liberen y reintentamos automáticamente
+                await Task.Delay(2000);
+
+                // Comprobamos que el jugador sigue en el menú (no canceló mientras esperábamos)
+                if (MenuManager.Instance != null && matchmakingCts != null && !matchmakingCts.IsCancellationRequested)
+                {
+                    Debug.Log("[MATCHMAKING] Reintentando matchmaking automáticamente...");
+                    await IniciarMatchmakingPublico(feeFijo);   // Reintento único
+                }
+                else
+                {
+                    if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
+                }
+            }
+            else
+            {
+                // Error real de sesión — no reintentamos
+                Debug.LogError($"[MATCHMAKING-ERROR] Fallo crítico Session: {e.Message}");
+                await AbandonarSala(true);
+                if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
+            }
+        }
+    }
+
+    private async Task SincronizarNoAds()
+    {
+        var query = await CloudSaveService.Instance.Data.Player.LoadAsync(new HashSet<string> { "NoAdsOwned" });
+        if (query.TryGetValue("NoAdsOwned", out var item))
+        {
+            bool tieneNoAds = item.Value.GetAs<bool>();
+            PlayerPrefs.SetInt("NoAds", tieneNoAds ? 1 : 0);
+            PlayerPrefs.Save();
         }
     }
 
     // --- EVENTOS DE SEGURIDAD ---
-
     private void OnSessionDeleted()
     {
-        Debug.LogWarning("[SEGURIDAD] La sesión ha sido destruida por el Host. Saliendo...");
-        ExpulsarAlHubPorCaidaHost();
+        // Disparamos la Task de forma segura desde un evento síncrono
+        _ = ExpulsarAlHubPorCaidaHostAsync();
     }
 
     private void OnHostChanged(string newHostId)
     {
-        Debug.LogWarning("[SEGURIDAD] El Host original se ha desconectado en la fase de espera. Saliendo...");
-        ExpulsarAlHubPorCaidaHost();
+        _ = ExpulsarAlHubPorCaidaHostAsync();
     }
 
-    private void ExpulsarAlHubPorCaidaHost()
+    
+    public async Task ExpulsarAlHubPorCaidaHostAsync()
     {
-        if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
-        AbandonarSala();
+        // Si ya estamos ejecutando esta rutina, ignoramos la llamada duplicada
+        if (_expulsandoAlHub) return;
+        _expulsandoAlHub = true;
+
+        try
+        {
+            Time.timeScale = 1f;
+
+            // MONETIZACIÓN: Reembolsos por culpa del Host
+            // Si esto se llama, significa que el Servidor se ha ido y somos un cliente (o fuimos expulsados).
+            // Si el fee ya fue deducido (la partida arrancó) y no se dio premio aún:
+            if (GameConfig.currentFee > 0 && !GameConfig.prizeAwarded)
+            {
+                if (GameConfig.isPrivateMatch)
+                {
+                    // Privada: Devolvemos fee y repartimos la penalización del host + el fee de los que huyeron
+                    // entre los clientes que siguen vivos.
+                    int clientesVivos = 1; // Mínimo 1 (tú mismo)
+                    
+                    if (InteractionManager.Instance != null && InteractionManager.Instance.vidas != null)
+                    {
+                        clientesVivos = 0;
+                        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+                        {
+                            ulong cid = InteractionManager.Instance.GetClientIdForSeat(i);
+                            // Si es humano (tiene cid), NO es el Host (cid != 0), y sigue vivo
+                            if (cid != ulong.MaxValue && cid != 0 && InteractionManager.Instance.vidas[i] > 0)
+                            {
+                                clientesVivos++;
+                            }
+                        }
+                        if (clientesVivos < 1) clientesVivos = 1; // Failsafe
+                    }
+
+                    // Pool = Penalización del Host + Fee de todos los clientes
+                    // Penalización del Host = Fee * (nHumanPlayers - 1)
+                    // Fee total aportado por clientes = Fee * (nHumanPlayers - 1)
+                    // Total Pool = 2 * Fee * (nHumanPlayers - 1)
+                    int poolTotal = 2 * GameConfig.currentFee * (GameConfig.nHumanPlayers - 1);
+                    
+                    // Repartir equitativamente entre los vivos (el fee original + su parte del botín)
+                    int recompensa = poolTotal / clientesVivos;
+                    
+                    TopBarUI.Instance.ActualizarMonedas(recompensa);
+                }
+                else
+                {
+                    // Pública: Devolvemos fee íntegro (fue culpa del matchmaking/host random)
+                    TopBarUI.Instance.ActualizarMonedas(GameConfig.currentFee);
+                }
+                GameConfig.prizeAwarded = true; // Para no devolver dos veces
+            }
+
+            await AbandonarSala(true);
+            await Task.Delay(500);
+
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != "MainMenu")
+            {
+                UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+            }
+            else
+            {
+                if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[RED] Error al expulsar al hub: {e.Message}");
+        }
+        finally
+        {
+            // Siempre liberamos el guard, aunque haya fallado
+            _expulsandoAlHub = false;
+        }
     }
 
+    // Alias público por compatibilidad con cualquier llamada directa existente
+    public void ExpulsarAlHubPorCaidaHost() => _ = ExpulsarAlHubPorCaidaHostAsync();
+   
     // =========================================================================
-    // 4. ABANDONAR / CANCELAR SALA
+    // 4. ABANDONAR / CANCELAR SALA (BLINDADO CONTRA WARNINGS)
     // =========================================================================
-    public async void AbandonarSala()
+   public async Task AbandonarSala(bool sesionYaDestruidaExternamente = false)
     {
+        matchmakingCts?.Cancel();
+        
+        // Chivato para saber si UGS ya se encargó de apagar Netcode
+        bool redApagadaPorUGS = false; 
+
         if (currentSession != null)
         {
             currentSession.Deleted -= OnSessionDeleted;
@@ -245,42 +415,45 @@ public class SessionNetworkManager : MonoBehaviour
 
             try
             {
-                if (currentSession.IsHost)
+                if (!sesionYaDestruidaExternamente)
                 {
-                    try
+                    if (currentSession.IsHost)
                     {
-                        // await CloudSaveService.Instance.Data.Custom.DeleteAsync(currentSession.Code);
+                        // ESTO apaga el NetworkManager automáticamente por dentro
+                        await currentSession.AsHost().DeleteAsync(); 
                     }
-                    catch
+                    else
                     {
-                        Debug.Log("Nota: CloudSave no pudo borrar la clave antigua.");
+                        // ESTO apaga el NetworkManager automáticamente por dentro
+                        await currentSession.LeaveAsync(); 
                     }
-
-                    await currentSession.AsHost().DeleteAsync();
-                }
-                else
-                {
-                    await currentSession.LeaveAsync();
+                    
+                    // Si llegamos aquí sin errores, UGS ya ha apagado la red
+                    redApagadaPorUGS = true; 
                 }
             }
-            catch (System.Exception e) { Debug.LogError($"Error al salir: {e.Message}"); }
+            catch (System.Exception e) { Debug.Log($"[RED] Limpieza local completada: {e.Message}"); }
 
             currentSession = null;
         }
 
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+       
+        // SOLO apagamos a mano si no había sesión en la nube o si UGS falló
+        if (!redApagadaPorUGS && NetworkManager.Singleton != null)
         {
-            NetworkManager.Singleton.Shutdown();
+            if (NetworkManager.Singleton.IsListening)
+            {
+                NetworkManager.Singleton.Shutdown();
+            }
         }
-    }
-
-    private void OnTransportCrash()
-    {
-        Debug.LogError("🚨 [CHIVATO] ¡EL TRANSPORTE DE UNITY HA CHOCADO! El puerto UDP ya está en uso.");
     }
 
     private void OnDestroy()
     {
-        AbandonarSala();
+        matchmakingCts?.Cancel();
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            NetworkManager.Singleton.Shutdown();
+        }
     }
 }

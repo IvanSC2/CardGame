@@ -10,9 +10,10 @@ public enum GameState { PLAYER_TURN, AI_TURN, WAITING }
 public class InteractionManager : NetworkBehaviour
 {
     public static InteractionManager Instance;
-    // Añade esto al principio de tu InteractionManager
+
     [Header("Control de Estado")]
     public bool yaHeJugadoMiTurno = false;
+
     [Header("Red")]
     //Se pueden cambiar los persmisos de acceso a la variable
     public NetworkVariable<int> totalJugadoresRed = new NetworkVariable<int>(2, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
@@ -49,6 +50,32 @@ public class InteractionManager : NetworkBehaviour
     public UICard SelectedCard { get; private set; }
     public bool isPaused = false;
 
+    //lambda guardada para desuscribir en OnNetworkDespawn
+    private System.Action<ulong> _onClientDisconnectHandler;
+   
+    private bool _mesaGenerada = false;
+
+    // SISTEMA DE ASIENTOS
+    // El servidor asigna explícitamente asiento 0..N-1 a cada cliente.
+    private int _mySeatIndex = 0;
+    public int MySeatIndex => _mySeatIndex;
+
+    private System.Collections.Generic.Dictionary<ulong, int> _clientToSeat
+        = new System.Collections.Generic.Dictionary<ulong, int>();
+    private System.Collections.Generic.Dictionary<int, ulong> _seatToClient
+        = new System.Collections.Generic.Dictionary<int, ulong>();
+
+    public bool IsPlayerConnectedAndHuman(int seatIndex)
+    {
+        return _seatToClient.TryGetValue(seatIndex, out ulong cid) && NetworkManager.Singleton.ConnectedClients.ContainsKey(cid);
+    }
+    
+    public ulong GetClientIdForSeat(int seatIndex)
+    {
+        if (_seatToClient.TryGetValue(seatIndex, out ulong cid)) return cid;
+        return ulong.MaxValue;
+    }
+
     private void Awake()
     {
         if (Instance != null && Instance != this) Destroy(this.gameObject);
@@ -66,47 +93,126 @@ public class InteractionManager : NetworkBehaviour
     /// </summary>
     public override void OnNetworkSpawn()
     {
-
+        // MONETIZACIÓN: Cobro por adelantado  al entrar a la partida
+        if (GameConfig.currentFee > 0 && !GameConfig.prizeAwarded)
+        {
+            TopBarUI.Instance.GastarMonedas(GameConfig.currentFee);
+            Debug.Log($"[ECONOMÍA] Partida arrancada. Fee deducido: {GameConfig.currentFee}");
+        }
 
         if (IsServer)
         {
             totalJugadoresRed.Value = GameConfig.nPlayers < 2 ? 2 : GameConfig.nPlayers;
-
-            //Detecta la desconexion de un Jugador
             NetworkManager.Singleton.OnClientDisconnectCallback += ControlarDesconexion;
+            // El servidor espera a que todos conecten y luego asigna asientos
+            StartCoroutine(AsignarAsientosYArrancar());
         }
+        // else: los clientes esperan el RPC AsignarAsientosRpc para generar la mesa
 
-        NetworkManager.Singleton.OnClientDisconnectCallback += (id) =>
+        //lambda para detectar caída del host en el cliente
+        _onClientDisconnectHandler = (id) =>
         {
-            // Si la ID que se desconecta es la mía o la del servidor (0)
-            // y no soy el servidor, significa que el Host ha cerrado la partida.
-            if (!NetworkManager.Singleton.IsServer)
+            if (!IsServer && NetworkManager.Singleton.IsConnectedClient)
             {
-                SceneManager.LoadScene("MainMenu");
+                if (SessionNetworkManager.Instance != null)
+                    SessionNetworkManager.Instance.ExpulsarAlHubPorCaidaHost();
+                else
+                {
+                    NetworkManager.Singleton.Shutdown();
+                    UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+                }
             }
         };
+        NetworkManager.Singleton.OnClientDisconnectCallback += _onClientDisconnectHandler;
+    }
 
-        totalJugadoresRed.OnValueChanged += (valorViejo, valorNuevo) =>
-        {
-            if (valorNuevo > 0) StartCoroutine(EsperarYGenerar(valorNuevo));
-        };
+    /// <summary>
+    /// Servidor: espera a que todos los clientes esperados conecten a NGO,
+    /// asigna asientos 0..N-1 de forma determinista y lo difunde via RPC.
+    /// </summary>
+    private IEnumerator AsignarAsientosYArrancar()
+    {
+        // En lugar de esperar a totalJugadoresRed.Value, esperamos a los humanos reales.
+        // Si por algún motivo es <= 0 (partida de práctica o viejo flujo), usamos totalJugadoresRed.
+        int esperados = GameConfig.nHumanPlayers;
+        if (esperados <= 0) esperados = totalJugadoresRed.Value;
 
-        if (totalJugadoresRed.Value > 0)
+        float timeout = 15f;
+        while (NetworkManager.Singleton.ConnectedClientsIds.Count < esperados && timeout > 0)
         {
-            StartCoroutine(EsperarYGenerar(totalJugadoresRed.Value));
+            timeout -= Time.deltaTime;
+            yield return null;
+        }
+        if (timeout <= 0)
+            Debug.LogWarning($"[ASIENTOS] Timeout: solo {NetworkManager.Singleton.ConnectedClientsIds.Count}/{esperados} conectaron.");
+
+        // Asignamos asientos en orden ascendente de clientId para que sea determinista
+        var ids = new System.Collections.Generic.List<ulong>(NetworkManager.Singleton.ConnectedClientsIds);
+        ids.Sort();
+        ulong[] asignaciones = ids.ToArray();
+
+        Debug.Log($"[ASIENTOS] Asignando {asignaciones.Length} asientos humanos en mesa de {totalJugadoresRed.Value}.");
+        AsignarAsientosRpc(asignaciones, totalJugadoresRed.Value);
+    }
+
+    [Rpc(SendTo.Everyone)]
+    private void AsignarAsientosRpc(ulong[] asignaciones, int totalMesa)
+    {
+        _clientToSeat.Clear();
+        _seatToClient.Clear();
+        for (int s = 0; s < asignaciones.Length; s++)
+        {
+            _clientToSeat[asignaciones[s]] = s;
+            _seatToClient[s] = asignaciones[s];
+        }
+
+        ulong myId = NetworkManager.Singleton.LocalClientId;
+        if (_clientToSeat.TryGetValue(myId, out int seat))
+            _mySeatIndex = seat;
+        else
+            Debug.LogError($"[ASIENTOS] ClientId {myId} no encontrado en la asignación.");
+
+        Debug.Log($"[ASIENTOS] ClientId={myId} → Asiento #{_mySeatIndex}. Generando mesa para {totalMesa}.");
+
+        if (!_mesaGenerada)
+        {
+            _mesaGenerada = true;
+            StartCoroutine(EsperarYGenerar(totalMesa));
         }
     }
+
+
+    public override void OnNetworkDespawn()
+    {
+        if (NetworkManager.Singleton != null)
+        {
+            NetworkManager.Singleton.OnClientDisconnectCallback -= ControlarDesconexion;
+            if (_onClientDisconnectHandler != null)
+                NetworkManager.Singleton.OnClientDisconnectCallback -= _onClientDisconnectHandler;
+        }
+        _onClientDisconnectHandler = null;
+        _mesaGenerada = false;
+        _mySeatIndex = 0;
+        _clientToSeat.Clear();
+        _seatToClient.Clear();
+    }
+
     private void ControlarDesconexion(ulong clientId)
     {
-
-
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening) return;
         if (!IsServer) return;
 
-        int playerIndex = (int)clientId;
-        Debug.Log($"⚠️ El Jugador {playerIndex} se ha desconectado. Queda eliminado.");
+        // Convertimos clientId → seatIndex usando el mapa del servidor
+        if (!_clientToSeat.TryGetValue(clientId, out int playerIndex))
+        {
+            Debug.LogWarning($"[DESCONEXION] clientId {clientId} no tiene asiento asignado (ya procesado).");
+            return;
+        }
+        if (vidas == null || playerIndex < 0 || playerIndex >= vidas.Length) return;
+        Debug.Log($"⚠️ ClientId={clientId} (Asiento {playerIndex}) se ha desconectado.");
 
         // 1. Lo eliminamos de la partida (0 vidas)
-        if (playerIndex < vidas.Length) vidas[playerIndex] = 0;
+        vidas[playerIndex] = 0;
 
         // 2. RECUPERAR CARTAS A LA BARAJA
         if (playerIndex < playerHands.Count && playerHands[playerIndex] != null)
@@ -143,15 +249,21 @@ public class InteractionManager : NetworkBehaviour
             BettingManager.Instance.FuerzaPasarTurnoDesconectado(playerIndex);
         }
 
-        else if (currentTurnIndex == playerIndex)
+        else
         {
-            ChangeTurn();
+            // Si estábamos en la fase de jugar cartas, comprobamos si la mesa ahora está llena
+            if (TableZone.Instance != null) TableZone.Instance.ForzarValidacionMesa();
+
+            if (currentTurnIndex == playerIndex && !isPaused)
+            {
+                ChangeTurn();
+            }
         }
     }
     [Rpc(SendTo.Everyone)]
     private void SincronizarDesconexionClientRpc(int idJugadorQueSeFue)
     {
-        vidas[idJugadorQueSeFue] = 0;
+        if (!IsServer) vidas[idJugadorQueSeFue] = 0;
         SetInfoMessage($"El Jugador {idJugadorQueSeFue} se ha desconectado.");
         ActualizarTodosLosPerfilesUI();
 
@@ -159,12 +271,14 @@ public class InteractionManager : NetworkBehaviour
         int humanosVivos = 0;
         for (int i = 0; i < totalPlayers; i++)
         {
-            if (vidas[i] > 0 && NetworkManager.Singleton.ConnectedClients.ContainsKey((ulong)i))
+            // Usamos _seatToClient para saber qué clientId ocupa el asiento i
+            if (vidas[i] > 0 && _seatToClient.TryGetValue(i, out ulong cid)
+                && NetworkManager.Singleton.ConnectedClients.ContainsKey(cid))
                 humanosVivos++;
         }
 
         // Si me he quedado yo solo como humano vivo, gano automáticamente
-        if (humanosVivos <= 1 && vidas[(int)NetworkManager.Singleton.LocalClientId] > 0)
+        if (humanosVivos <= 1 && vidas[_mySeatIndex] > 0)
         {
             if (PauseManager.Instance != null) PauseManager.Instance.TriggerGameOver(1);
         }
@@ -181,19 +295,13 @@ public class InteractionManager : NetworkBehaviour
     private void TerminarPartidaPorAbandonoClientRpc(int ganadorIndex)
     {
         isPaused = true;
-        int localId = (int)NetworkManager.Singleton.LocalClientId;
 
-        // Si yo soy el ganador (el que se ha quedado en la sala)
-        if (localId == ganadorIndex)
-        {
+        if (_mySeatIndex == ganadorIndex)
             SetInfoMessage("¡TODOS TUS RIVALES HAN ABANDONADO! ¡VICTORIA!");
-        }
 
-        // Mostramos el cartel de Game Over
         if (PauseManager.Instance != null)
         {
-            // Te damos el puesto 1 si eres el ganador, o un puesto peor si fueras otro
-            int puesto = (localId == ganadorIndex) ? 1 : 2;
+            int puesto = (_mySeatIndex == ganadorIndex) ? 1 : 2;
             PauseManager.Instance.TriggerGameOver(puesto);
         }
     }
@@ -207,15 +315,15 @@ public class InteractionManager : NetworkBehaviour
 
     private void ArrancarMesaLocal(int numJugadores)
     {
-        Debug.Log($"Soy el ID {NetworkManager.Singleton.LocalClientId} y voy a generar mesa para {numJugadores}");
-        IniciarPartidaEnRed(numJugadores);
+        Debug.Log($"[ASIENTOS] ClientId={NetworkManager.Singleton.LocalClientId} (Asiento #{_mySeatIndex}) generando mesa para {numJugadores}");
+        IniciarPartidaEnRed(numJugadores, _mySeatIndex);
     }
 
-    public void IniciarPartidaEnRed(int totalJugadoresEnSala)
+    public void IniciarPartidaEnRed(int totalJugadoresEnSala, int localSeatIndex)
     {
         if (TableManagerLayout.Instance != null)
         {
-            TableManagerLayout.Instance.GenerarMesa(totalJugadoresEnSala);
+            TableManagerLayout.Instance.GenerarMesa(totalJugadoresEnSala, localSeatIndex);
 
             if (TableManagerLayout.Instance.manosActivas.Count >= 2)
             {
@@ -235,18 +343,12 @@ public class InteractionManager : NetworkBehaviour
                     bazasGanadas[i] = 0;
                 }
 
-                if (IsServer) //Sorteo de quien empieza al principio
+                if (IsServer)
                 {
-
                     int sorteo = Random.Range(0, totalPlayers);
-
-                    // Asignamos el resultado al manoMesaIndex
                     manoMesaIndex = sorteo;
-
-                    // El turno actual empieza siendo el del elegido
                     currentTurnIndex = manoMesaIndex;
-
-                    Debug.Log($"🎲 SORTEO: El Jugador {manoMesaIndex} empieza la partida.");
+                    Debug.Log($"🎲 SORTEO: El Asiento {manoMesaIndex} empieza la partida.");
                 }
             }
         }
@@ -290,24 +392,26 @@ public class InteractionManager : NetworkBehaviour
     private void SincronizarTurnoClientRpc(int nuevoTurno)
     {
         currentTurnIndex = nuevoTurno;
-        int localId = (int)NetworkManager.Singleton.LocalClientId;
-
 
         if (vidas[currentTurnIndex] <= 0)
         {
             currentState = GameState.WAITING;
-            return; // Los eliminados no juegan ni piensan
+            return;
         }
 
-        currentState = (currentTurnIndex == localId) ? GameState.PLAYER_TURN : GameState.WAITING;
+        // Usamos _mySeatIndex (NO LocalClientId) para saber si es nuestro turno
+        currentState = (currentTurnIndex == _mySeatIndex) ? GameState.PLAYER_TURN : GameState.WAITING;
 
         UpdateVisualStates();
         ClearSelection();
 
         if (IsServer)
         {
-            bool isHuman = NetworkManager.Singleton.ConnectedClients.ContainsKey((ulong)currentTurnIndex);
-            if (!isHuman)
+            // Comprobamos si el asiento actual pertenece a un humano usando el mapa de asientos
+            bool currentPlayerIsHuman = _seatToClient.TryGetValue(currentTurnIndex, out ulong cid)
+                                        && NetworkManager.Singleton.ConnectedClients.ContainsKey(cid);
+
+            if (!currentPlayerIsHuman)
             {
                 currentState = GameState.AI_TURN;
                 StartCoroutine(AITurnRoutine());
@@ -350,22 +454,14 @@ public class InteractionManager : NetworkBehaviour
     // ========================================================================
     public void SelectCard(UICard card)
     {
-        int localId = (int)NetworkManager.Singleton.LocalClientId;
-        bool isMyCard = card.transform.parent == playerHands[localId].transform;
+        bool isMyCard = card.transform.parent == playerHands[_mySeatIndex].transform;
 
-        // Si soy un humano en mi turno
         bool canSelectAsHuman = (currentState == GameState.PLAYER_TURN && isMyCard);
-        // Si el Servidor está controlando un Bot (solo el Host puede hacer esto)
         bool canSelectAsAI = (IsServer && currentState == GameState.AI_TURN && card.transform.parent == playerHands[currentTurnIndex].transform);
 
         if (canSelectAsHuman || canSelectAsAI)
         {
-            if (SelectedCard == card)
-            {
-                ClearSelection();
-                return;
-            }
-
+            if (SelectedCard == card) { ClearSelection(); return; }
             if (SelectedCard != null) SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
             SelectedCard = card;
             SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.yellow;
@@ -384,12 +480,9 @@ public class InteractionManager : NetworkBehaviour
     {
         if (isPaused || playerHands.Count == 0) return;
 
-        int localId = (int)NetworkManager.Singleton.LocalClientId;
-
         for (int i = 0; i < playerHands.Count; i++)
         {
-            // Solo brilla y es tocable si eres TÚ, y es TU turno.
-            bool isMyTurnAndMyHand = (i == currentTurnIndex && i == localId);
+            bool isMyTurnAndMyHand = (i == currentTurnIndex && i == _mySeatIndex);
             SetGroupState(playerHands[i], isMyTurnAndMyHand, isMyTurnAndMyHand ? 1f : 0.5f);
         }
     }
@@ -534,9 +627,8 @@ public class InteractionManager : NetworkBehaviour
     private void SincronizarGanadorBazaClientRpc(int winnerIndex, int totalBazasDelGanador)
     {
         bazasGanadas[winnerIndex] = totalBazasDelGanador;
-        int localId = (int)NetworkManager.Singleton.LocalClientId;
 
-        if (winnerIndex == localId) SetInfoMessage("¡TÚ TIENES LA CARTA MÁS ALTA!");
+        if (winnerIndex == _mySeatIndex) SetInfoMessage("¡TÚ TIENES LA CARTA MÁS ALTA!");
         else SetInfoMessage($"¡EL JUGADOR {winnerIndex} TIENE LA CARTA MÁS ALTA!");
 
         ActualizarTodosLosPerfilesUI();
@@ -547,15 +639,11 @@ public class InteractionManager : NetworkBehaviour
     // ========================================================================
     public void ActualizarTodosLosPerfilesUI()
     {
-        int localId = 0;
-        if (NetworkManager.Singleton != null && (NetworkManager.Singleton.IsClient || NetworkManager.Singleton.IsHost))
-            localId = (int)NetworkManager.Singleton.LocalClientId;
-
         for (int i = 0; i < totalPlayers; i++)
         {
             if (TableManagerLayout.Instance.perfilesActivos.Count > i)
             {
-                string nombre = (i == localId) ? "TÚ" : $"JUGADOR {i}";
+                string nombre = (i == _mySeatIndex) ? "TÚ" : $"JUGADOR {i}";
                 TableManagerLayout.Instance.perfilesActivos[i].ActualizarPerfil(nombre, vidas[i], bazasGanadas[i], apuestas[i]);
             }
         }
@@ -569,17 +657,14 @@ public class InteractionManager : NetworkBehaviour
     public void RefreshHandVisibility()
     {
         if (playerHands == null || playerHands.Count == 0) return;
-        int localId = 0;
-        if (NetworkManager.Singleton != null && (NetworkManager.Singleton.IsClient || NetworkManager.Singleton.IsHost))
-            localId = (int)NetworkManager.Singleton.LocalClientId;
 
         for (int i = 0; i < playerHands.Count; i++)
         {
             CanvasGroup hand = playerHands[i];
             if (hand == null) continue;
 
-            bool shouldBeFaceUp = (i == localId);
-            if (currentRoundCards == 1) shouldBeFaceUp = (i != localId);
+            bool shouldBeFaceUp = (i == _mySeatIndex);
+            if (currentRoundCards == 1) shouldBeFaceUp = (i != _mySeatIndex);
 
             foreach (Transform child in hand.transform)
             {
@@ -596,7 +681,14 @@ public class InteractionManager : NetworkBehaviour
         if (suit == "Picas") return 2;
         return 1;
     }
-
+    /*public override void OnNetworkDespawn()
+{
+    if (NetworkManager.Singleton != null)
+    {
+        NetworkManager.Singleton.OnClientDisconnectCallback -= ControlarDesconexion;
+        NetworkManager.Singleton.OnClientDisconnectCallback -= _onClientDisconnectHandler;
+    }
+}*/
     public void StartNewGame() { SceneManager.LoadScene(SceneManager.GetActiveScene().name); }
     public void ToggleAIDebugView() { isDebugAIVisible = !isDebugAIVisible; RefreshHandVisibility(); }
 }

@@ -3,9 +3,9 @@ using UnityEngine.EventSystems;
 using System.Collections;
 using System.Collections.Generic; 
 using TMPro; 
-using Unity.Netcode; // NUEVO: Importar Netcode
+using Unity.Netcode; 
 
-public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herencia de NetworkBehaviour
+public class TableZone : NetworkBehaviour, IPointerClickHandler 
 {
     public static TableZone Instance;
 
@@ -73,12 +73,10 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
             int indexCartaEnMano = cardToMove.transform.GetSiblingIndex();
 
             // Si soy yo mismo el que juega (o soy el Host jugando por un Bot), solicito la jugada
-            int localId = (int)NetworkManager.Singleton.LocalClientId;
-            if (duenoIndex == localId || (IsServer && !NetworkManager.Singleton.ConnectedClients.ContainsKey((ulong)duenoIndex)))
+            int localId = InteractionManager.Instance.MySeatIndex;
+            if (duenoIndex == localId || (IsServer && !InteractionManager.Instance.IsPlayerConnectedAndHuman(duenoIndex)))
             {   
-                
                 InteractionManager.Instance.ClearSelection();
-                //InteractionManager.Instance.isPaused = true;
                 // Enviar la petición al Servidor
                 SolicitarJugarCartaServerRpc(duenoIndex, indexCartaEnMano);
             }
@@ -98,21 +96,20 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
         JugarCartaMesaClientRpc(playerIndex, indexCartaEnMano);
 
         // 3. Comprobar si la ronda se ha terminado en el servidor
-        int jugadoresVivos = 0;
-        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
-        {
-            if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivos++;
-        }
-
-        // Si ya han tirado todos los vivos, la mesa estará llena 
-        StartCoroutine(ValidarFinTurnoMesa(jugadoresVivos));
+        StartCoroutine(ValidarFinTurnoMesa());
     }
 
-    private IEnumerator ValidarFinTurnoMesa(int jugadoresVivos)
+    private IEnumerator ValidarFinTurnoMesa()
     {
         yield return new WaitForSeconds(0.1f);
-        
-        if (cartasEnMesa.Count >= jugadoresVivos)
+        // RE-CALCULAR vivos ahora, por si alguien se ha desconectado desde que tiró la carta
+        int vivosAhora = 0;
+        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+        {
+            if (InteractionManager.Instance.vidas[i] > 0) vivosAhora++;
+        }
+
+        if (cartasEnMesa.Count >= vivosAhora && vivosAhora > 0)
         {
             // Pausar y chequear ganador
             PausarInteraccionClientRpc();
@@ -121,8 +118,21 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
         else
         {
             // Siguiente turno
-            //PausarInteraccionClientRpc();
             InteractionManager.Instance.ChangeTurn();
+        }
+    }
+
+    public void ForzarValidacionMesa()
+    {
+        if (!IsServer) return;
+        int vivosAhora = 0;
+        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+            if (InteractionManager.Instance.vidas[i] > 0) vivosAhora++;
+
+        if (vivosAhora > 0 && cartasEnMesa.Count >= vivosAhora)
+        {
+            PausarInteraccionClientRpc();
+            CheckWinner();
         }
     }
 
@@ -243,7 +253,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
         // Actualizamos el array local del Cliente con el dato real del Servidor
         InteractionManager.Instance.bazasGanadas[winnerIndex] = totalBazasDelGanador;
 
-        int localId = (int)NetworkManager.Singleton.LocalClientId;
+        int localId = InteractionManager.Instance.MySeatIndex;
         if (winnerIndex == localId) InteractionManager.Instance.SetInfoMessage("¡TÚ GANAS LA BAZA!\n");
         else InteractionManager.Instance.SetInfoMessage($"¡EL JUGADOR {winnerIndex} GANA LA BAZA!\n");
     }
@@ -260,10 +270,8 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
 
         string mensajeResultado = "RESULTADOS:\n";
         InteractionManager.Instance.rondasJugadasTotales++;
-        int totalPlayers = InteractionManager.Instance.totalPlayers;
-
-        bool p1EstabaVivo = InteractionManager.Instance.vidas[0] > 0;
         int jugadoresVivos = 0;
+        int totalPlayers = InteractionManager.Instance.totalPlayers;
 
         for (int i = 0; i < totalPlayers; i++)
         {
@@ -292,20 +300,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
         // Enviamos la resolución al resto de jugadores (para que actualicen vidas/texto)
         SincronizarResolucionRondaClientRpc(mensajeResultado, InteractionManager.Instance.vidas, InteractionManager.Instance.bazasTotales, InteractionManager.Instance.apuestasAcertadasTotales);
 
-        bool p1SigueVivo = InteractionManager.Instance.vidas[0] > 0;
-
-        if (p1EstabaVivo && !p1SigueVivo)
-        {
-            puestoP1Temp = jugadoresVivos + 1;
-            Invoke("TriggerFin", 2.0f);
-            if (jugadoresVivos > 1) StartCoroutine(ResetRoundAfterDelay());
-        }
-        else if (jugadoresVivos <= 1)
-        {
-            if (p1SigueVivo) puestoP1Temp = 1;
-            Invoke("TriggerFin", 2.0f);
-        }
-        else
+        if (jugadoresVivos > 1)
         {
             StartCoroutine(ResetRoundAfterDelay());
         }
@@ -316,7 +311,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
     {
         InteractionManager.Instance.SetInfoMessage(mensaje);
         
-        int localId = (int)NetworkManager.Singleton.LocalClientId;
+        int localId = InteractionManager.Instance.MySeatIndex;
         // Comprobamos nuestra vida ANTES de actualizar
         bool estabaVivo = InteractionManager.Instance.vidas[localId] > 0;
 
@@ -340,20 +335,20 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
         {
             // Acabo de morir esta ronda
             int miPuesto = jugadoresVivos + 1;
-            if (PauseManager.Instance != null) PauseManager.Instance.TriggerGameOver(miPuesto);
+            StartCoroutine(DelayedGameOver(miPuesto, 2f));
         }
         else if (jugadoresVivos <= 1 && sigoVivo)
         {
             // Quedo yo solo en la mesa, soy el ganador
-            if (PauseManager.Instance != null) PauseManager.Instance.TriggerGameOver(1);
+            StartCoroutine(DelayedGameOver(1, 2f));
         }
     }
 
-    private int puestoP1Temp; 
-    private void TriggerFin()
+    private System.Collections.IEnumerator DelayedGameOver(int puesto, float delay)
     {
-        if(PauseManager.Instance != null)
-            PauseManager.Instance.TriggerGameOver(puestoP1Temp);
+        yield return new WaitForSeconds(delay);
+        if (PauseManager.Instance != null)
+            PauseManager.Instance.TriggerGameOver(puesto);
     }
 
     IEnumerator ResetRoundAfterDelay()

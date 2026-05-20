@@ -12,7 +12,7 @@ public class MainMenuManager : MonoBehaviour
     {
         if (selectorJugadores != null)
         {
-            // OJO: Si nPlayers es 1 (1 Bot), el índice del selector es el 0. Le restamos 1.
+          
             selectorJugadores.EstablecerIndice(GameConfig.nPlayers - 1);
         }
         
@@ -41,15 +41,15 @@ public class MainMenuManager : MonoBehaviour
         CardDatabase.deck.Clear();
     }
 
-    // --- ¡NUEVO VIAJE EN RED! ---
+
     if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
     {
-        // El Host conduce el autobús y cambia la escena para todos
+        
         NetworkManager.Singleton.SceneManager.LoadScene("MainGame", LoadSceneMode.Single);
     }
     else
     {
-        // El Cliente simplemente espera (puedes poner un texto en la UI aquí si quieres)
+        
         Debug.Log("Eres un cliente. Esperando a que el Host inicie la partida...");
     }
 }

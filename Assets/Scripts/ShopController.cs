@@ -1,6 +1,7 @@
 #pragma warning disable 0618
 using UnityEngine;
 using UnityEngine.Purchasing;
+using System.Collections.Generic;
 
 public class ShopController : MonoBehaviour, IStoreListener
 {
@@ -115,12 +116,24 @@ public class ShopController : MonoBehaviour, IStoreListener
         }
     }
     
-    private void ActivarNoAds()
+    private async void ActivarNoAds()
+{
+    try 
     {
+        // 1. Guardamos localmente para que el efecto sea instantáneo
         PlayerPrefs.SetInt("NoAds", 1);
-        PlayerPrefs.Save();
-        Debug.Log("¡Publicidad eliminada de forma permanente!");
+        
+        // 2. GUARDAMOS EN LA NUBE (UGS) para que sea permanente por perfil
+        var data = new Dictionary<string, object> { { "NoAdsOwned", true } };
+        await Unity.Services.CloudSave.CloudSaveService.Instance.Data.Player.SaveAsync(data);
+        
+        Debug.Log("¡Compra de NoAds sincronizada con tu perfil en la nube!");
     }
+    catch (System.Exception e)
+    {
+        Debug.LogError($"Error al sincronizar NoAds: {e.Message}");
+    }
+}
 
     //MÉTODO OBLIGATORIOS IAP 
     public void OnInitialized(IStoreController controller, IExtensionProvider extensions) 

@@ -1,6 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
-using Unity.Netcode; // ¡NUEVO! Necesario para saber quién somos en la red
+using Unity.Netcode; 
 
 public class TableManagerLayout : MonoBehaviour
 {
@@ -39,8 +39,11 @@ public class TableManagerLayout : MonoBehaviour
         if (Instance == null) Instance = this;
     }
 
-    public void GenerarMesa(int numJugadores)
-    {
+    public void GenerarMesa(int numJugadores, int localSeatIndex)
+    {   
+        
+        if (CardDatabase.deck != null) CardDatabase.deck.Clear(); 
+        manosActivas = new List<CanvasGroup>(); 
         // 1. Limpieza inicial
         foreach (Transform child in contenedorHandAreas) Destroy(child.gameObject);
         manosActivas.Clear();
@@ -49,13 +52,8 @@ public class TableManagerLayout : MonoBehaviour
         if (perspectiveManager != null)
             perspectiveManager.handAreas.Clear();
 
-        // --- ¡NUEVA LÓGICA DE RED! ---
-        // Preguntamos al NetworkManager cuál es nuestro número de jugador
-        int localId = 0;
-        if (NetworkManager.Singleton != null && (NetworkManager.Singleton.IsClient || NetworkManager.Singleton.IsHost))
-        {
-            localId = (int)NetworkManager.Singleton.LocalClientId;
-        }
+        // El localSeatIndex viene asignado por el servidor (0..N-1)
+        int localId = localSeatIndex;
 
         // 2. MESA VIRTUAL: Calculamos asientos extra
         int asientosVirtuales = numJugadores;
@@ -68,7 +66,7 @@ public class TableManagerLayout : MonoBehaviour
 
         for (int i = 0; i < numJugadores; i++)
         {
-            // EL TRUCO MAGICO: Desplazamos el índice visual basándonos en tu ID local
+            //  Desplazamos el índice visual basándonos en tu ID local
             int visualIndex = (i - localId + numJugadores) % numJugadores;
             
             // A partir de aquí, para dibujar sillas y posiciones usamos "visualIndex"
@@ -104,7 +102,7 @@ public class TableManagerLayout : MonoBehaviour
             if (handAreaPrefab != null)
             {
                 GameObject handArea = Instantiate(handAreaPrefab, contenedorHandAreas);
-                // ¡OJO! El nombre real de la mano usa la 'i' para que la lógica de red siga funcionando
+                
                 handArea.name = $"HandArea_JUG{i}";
 
                 RectTransform rtHand = handArea.GetComponent<RectTransform>();
@@ -182,6 +180,21 @@ public class TableManagerLayout : MonoBehaviour
                     if (visualIndex == 1) { perfilPosX = 1300f; perfilPosY = 400f; } 
                     else if (visualIndex == 2) { perfilPosX = 0f; perfilPosY = 1700f; } 
                     else if (visualIndex == 3) { perfilPosX = -1300f; perfilPosY = 400f; } 
+                }
+                else if (numJugadores == 5)
+                {
+                    if (visualIndex == 1) { perfilPosX = 1250f; perfilPosY = 300f; } 
+                    else if (visualIndex == 2) { perfilPosX = 700f; perfilPosY = 1600f; } 
+                    else if (visualIndex == 3) { perfilPosX = -700f; perfilPosY = 1600f; } 
+                    else if (visualIndex == 4) { perfilPosX = -1250f; perfilPosY = 300f; } 
+                }
+                else if (numJugadores >= 6)
+                {
+                    if (visualIndex == 1) { perfilPosX = 1300f; perfilPosY = 150f; } 
+                    else if (visualIndex == 2) { perfilPosX = 1000f; perfilPosY = 1400f; } 
+                    else if (visualIndex == 3) { perfilPosX = 0f; perfilPosY = 1700f; } 
+                    else if (visualIndex == 4) { perfilPosX = -1000f; perfilPosY = 1400f; } 
+                    else if (visualIndex == 5) { perfilPosX = -1300f; perfilPosY = 150f; } 
                 }
                 
                 rtPerfil.anchoredPosition = new Vector2(perfilPosX, perfilPosY);

@@ -64,14 +64,14 @@ public class PauseManager : NetworkBehaviour
     }
 
     //  RECIBE EL PUESTO NUMÉRICO 
-    public void TriggerGameOver(int puesto)
+   public void TriggerGameOver(int puesto)
     {
         isGameOver = true;
 
         if (titleText != null)
             titleText.text = "GAMEOVER";
 
-        // 1. Contamos cuántos vivos quedan en toda la mesa
+        // 1. Contamos cuántos vivos quedan en toda la mesa (Humanos + Bots)
         int jugadoresVivos = 0;
         if (InteractionManager.Instance != null)
         {
@@ -81,20 +81,35 @@ public class PauseManager : NetworkBehaviour
             }
         }
 
-        // 2. Cambio de botones para el modo Game Over
+        // 2. Contamos ESPECÍFICAMENTE cuántos HUMANOS quedan vivos
+        int otrosHumanosVivos = 0;
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            foreach (ulong clientId in NetworkManager.Singleton.ConnectedClientsIds)
+            {
+                int id = (int)clientId;
+                // Si el cliente no soy yo, y además tiene vidas > 0, es un humano vivo
+                if (id != (int)NetworkManager.Singleton.LocalClientId && InteractionManager.Instance.vidas[id] > 0)
+                {
+                    otrosHumanosVivos++;
+                }
+            }
+        }
+
+        // 3. Cambio de botones para el modo Game Over
         if (resumeButton != null) resumeButton.SetActive(false);
 
-        // Activamos "Espectar" si quedan al menos 2 personas para jugar.
+        //Solo se puede espectar si queda OTRO HUMANO REAL jugando
         if (spectateButton != null)
         {
-            bool sePuedeEspectar = (jugadoresVivos > 1);
+            bool sePuedeEspectar = (otrosHumanosVivos > 0);
             spectateButton.SetActive(sePuedeEspectar);
         }
 
+        // 4. Mostrar Estadísticas
         if (statsText != null)
         {
             statsText.gameObject.SetActive(true);
-
             var im = InteractionManager.Instance;
             int rondas = im.rondasJugadasTotales;
 
@@ -107,27 +122,36 @@ public class PauseManager : NetworkBehaviour
             statsText.alignment = TextAlignmentOptions.Center;
         }
 
-        // Encendemos el panel visual directamente sin usar el método antiguo
-        pausePanel.SetActive(true); // O el nombre que tenga tu panel principal
-
-        
-        int otrosHumanosVivos = 0;
-        foreach (ulong clientId in NetworkManager.Singleton.ConnectedClientsIds)
+        // MONETIZACIÓN: Reparto de premios al finalizar
+        if (!GameConfig.prizeAwarded && GameConfig.currentFee > 0)
         {
-            int id = (int)clientId;
-            if (id != (int)NetworkManager.Singleton.LocalClientId && InteractionManager.Instance.vidas[id] > 0)
+            if (puesto == 1) // Ganador absoluto
             {
-                otrosHumanosVivos++;
+                TopBarUI.Instance.ActualizarMonedas(GameConfig.currentPrize);
+                Debug.Log($"[ECONOMÍA] ¡Has ganado! Recibes {GameConfig.currentPrize} monedas.");
             }
+            
+            // Bono por hostear partida pública hasta el final
+            if (!GameConfig.isPrivateMatch && GameConfig.isHostLobby)
+            {
+                TopBarUI.Instance.ActualizarMonedas(50);
+                Debug.Log("[ECONOMÍA] Bono de 50 monedas por mantener el servidor público vivo.");
+            }
+            
+            GameConfig.prizeAwarded = true;
         }
 
+        // Encendemos el panel visual
+        pausePanel.SetActive(true); 
+
+        // 5. Congelamos el tiempo SOLO si ya no quedan humanos
         if (otrosHumanosVivos == 0)
         {
-            Time.timeScale = 0f; // Congelo porque ya nadie real está jugando
+            Time.timeScale = 0f; // Congelo porque ya nadie real está jugando (solo bots)
         }
         else
         {
-            Time.timeScale = 1f; // NO congelo
+            Time.timeScale = 1f; // NO congelo para que puedas espectar la partida del otro
         }
     }
 
@@ -154,19 +178,39 @@ public class PauseManager : NetworkBehaviour
         if (TableZone.Instance != null) TableZone.Instance.ResetStats();
     }
 
-    public void QuitGame()
-    {
-        Time.timeScale = 1f;
-        if (NetworkManager.Singleton != null)
-        {
-            // Al llamar a Shutdown, Netcode corta los cables.
-            // Los clientes recibirán el evento 'OnClientDisconnectCallback' inmediatamente.
-            NetworkManager.Singleton.Shutdown();
-        }
 
-        // 2. Volvemos al menú
-        SceneManager.LoadScene("MainMenu");
+public async void QuitGame() 
+{ 
+    Time.timeScale = 1f;
+
+    // MONETIZACIÓN: Penalización por abandono voluntario del Host en Privadas
+    if (!GameConfig.prizeAwarded && GameConfig.currentFee > 0)
+    {
+        if (GameConfig.isPrivateMatch && GameConfig.isHostLobby)
+        {
+            // El Host de una privada huye: pierde la fianza de los demás (él ya pagó la suya)
+            int penalty = GameConfig.currentFee * (GameConfig.nHumanPlayers - 1);
+            if (penalty > 0)
+            {
+                TopBarUI.Instance.GastarMonedas(penalty);
+                Debug.Log($"[ECONOMÍA] Penalización por abandonar hosteando: -{penalty} monedas.");
+            }
+        }
+        GameConfig.prizeAwarded = true; 
     }
+
+    // Si el gestor de red existe, cerramos la sesión de UGS y apagamos Netcode
+    if (SessionNetworkManager.Instance != null)
+    {
+        // false porque aquí la conexión SÍ está viva y queremos avisar educadamente a UGS
+        await SessionNetworkManager.Instance.AbandonarSala(false);
+        
+        // Esperamos a que los sockets se liberen antes de cambiar de escena
+        await System.Threading.Tasks.Task.Delay(500);
+    }
+
+    UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+}
 
     private void SetPauseState(bool isPaused)
     {

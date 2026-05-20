@@ -107,7 +107,7 @@ public class BettingManager : NetworkBehaviour
         AvisarTurnoApuestaClientRpc(currentBetterIndex, forbiddenBet, betsPlaced);
 
         // Si el jugador NO es un cliente humano conectado, es un BOT. El servidor calcula por él.
-        if (!NetworkManager.Singleton.ConnectedClients.ContainsKey((ulong)currentBetterIndex))
+        if (!InteractionManager.Instance.IsPlayerConnectedAndHuman(currentBetterIndex))
         {
             StartCoroutine(AIBetRoutine(currentBetterIndex, isLastToBet, forbiddenBet));
         }
@@ -118,17 +118,29 @@ public class BettingManager : NetworkBehaviour
     // ========================================================================
 
     public void FuerzaPasarTurnoDesconectado(int playerIndex)
-{
-    if (!IsServer) return;
-    if (currentBetterIndex == playerIndex)
     {
-        InteractionManager.Instance.apuestas[playerIndex] = 0; // Apuesta neutra
-        betsPlaced++;
-        currentBetterIndex = (currentBetterIndex + 1) % InteractionManager.Instance.totalPlayers;
-        ProcessNextBetServer();
+        if (!IsServer) return;
+
+        // Si ya había apostado, retiramos su apuesta para que la cuenta cuadre con los vivos actuales
+        if (InteractionManager.Instance.apuestas[playerIndex] >= 0)
+        {
+            InteractionManager.Instance.apuestas[playerIndex] = -1;
+            betsPlaced--;
+        }
+
+        int jugadoresVivosRonda = 0;
+        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+        {
+            if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivosRonda++;
+        }
+
+        // Avanzamos o cerramos si le tocaba a él, o si con su muerte ya todos los vivos apostaron
+        if (currentBetterIndex == playerIndex || betsPlaced >= jugadoresVivosRonda)
+        {
+            ProcessNextBetServer();
+        }
     }
-}
-    [ClientRpc]
+    [Rpc(SendTo.Everyone)]
     private void PrepararFaseApuestasClientRpc(int numCards)
     {
         cardsInRound = numCards;
@@ -143,10 +155,10 @@ public class BettingManager : NetworkBehaviour
         InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
     }
 
-    [ClientRpc]
+    [Rpc(SendTo.Everyone)]
     private void AvisarTurnoApuestaClientRpc(int turnoDe, int forbiddenBet, int apuestasRealizadas)
     {
-        int miIdLocal = (int)NetworkManager.Singleton.LocalClientId;
+        int miIdLocal = InteractionManager.Instance.MySeatIndex;
 
         // Texto informativo en la parte superior
         if (apuestasRealizadas > 0)
@@ -187,18 +199,18 @@ public class BettingManager : NetworkBehaviour
         }
     }
 
-    [ClientRpc]
+    [Rpc(SendTo.Everyone)]
     private void RegistrarApuestaClientRpc(int playerIndex, int amount)
     {
         // Todos los ordenadores actualizan sus datos y perfiles visuales
         InteractionManager.Instance.apuestas[playerIndex] = amount;
         
-        string nombre = (playerIndex == (int)NetworkManager.Singleton.LocalClientId) ? "TÚ" : $"JUGADOR {playerIndex}";
+        string nombre = (playerIndex == InteractionManager.Instance.MySeatIndex) ? "TÚ" : $"JUGADOR {playerIndex}";
         InteractionManager.Instance.SetInfoMessage($"{nombre} APUESTA: {amount}");
         InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
     }
 
-    [ClientRpc]
+    [Rpc(SendTo.Everyone)]
     private void CerrarPanelClientRpc()
     {
         panelRoot.SetActive(false);
@@ -218,9 +230,20 @@ public class BettingManager : NetworkBehaviour
 private void EnviarApuestaServerRpc(int amount, RpcParams rpcParams = default) // Cambiado a RpcParams
 {
     ulong senderId = rpcParams.Receive.SenderClientId;
+    int senderSeat = -1;
+    
+    // Convertir senderId a seatIndex usando InteractionManager
+    for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+    {
+        if (InteractionManager.Instance.GetClientIdForSeat(i) == senderId)
+        {
+            senderSeat = i;
+            break;
+        }
+    }
     
     // Validación de seguridad
-    if ((ulong)currentBetterIndex != senderId) return; 
+    if (currentBetterIndex != senderSeat) return; 
 
     // El servidor acepta la apuesta, avisa a todos y pasa turno
     RegistrarApuestaClientRpc(currentBetterIndex, amount);

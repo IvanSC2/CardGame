@@ -1,0 +1,2375 @@
+﻿diff --git a/Assets/Scripts/BettingManager.cs b/Assets/Scripts/BettingManager.cs
+index 1089968..80dd9b6 100644
+--- a/Assets/Scripts/BettingManager.cs
++++ b/Assets/Scripts/BettingManager.cs
+@@ -107,7 +107,7 @@ public class BettingManager : NetworkBehaviour
+         AvisarTurnoApuestaClientRpc(currentBetterIndex, forbiddenBet, betsPlaced);
+ 
+         // Si el jugador NO es un cliente humano conectado, es un BOT. El servidor calcula por ├®l.
+-        if (!NetworkManager.Singleton.ConnectedClients.ContainsKey((ulong)currentBetterIndex))
++        if (!InteractionManager.Instance.IsPlayerConnectedAndHuman(currentBetterIndex))
+         {
+             StartCoroutine(AIBetRoutine(currentBetterIndex, isLastToBet, forbiddenBet));
+         }
+@@ -118,17 +118,29 @@ public class BettingManager : NetworkBehaviour
+     // ========================================================================
+ 
+     public void FuerzaPasarTurnoDesconectado(int playerIndex)
+-{
+-    if (!IsServer) return;
+-    if (currentBetterIndex == playerIndex)
+     {
+-        InteractionManager.Instance.apuestas[playerIndex] = 0; // Apuesta neutra
+-        betsPlaced++;
+-        currentBetterIndex = (currentBetterIndex + 1) % InteractionManager.Instance.totalPlayers;
+-        ProcessNextBetServer();
++        if (!IsServer) return;
++
++        // Si ya hab├¡a apostado, retiramos su apuesta para que la cuenta cuadre con los vivos actuales
++        if (InteractionManager.Instance.apuestas[playerIndex] >= 0)
++        {
++            InteractionManager.Instance.apuestas[playerIndex] = -1;
++            betsPlaced--;
++        }
++
++        int jugadoresVivosRonda = 0;
++        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
++        {
++            if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivosRonda++;
++        }
++
++        // Avanzamos o cerramos si le tocaba a ├®l, o si con su muerte ya todos los vivos apostaron
++        if (currentBetterIndex == playerIndex || betsPlaced >= jugadoresVivosRonda)
++        {
++            ProcessNextBetServer();
++        }
+     }
+-}
+-    [ClientRpc]
++    [Rpc(SendTo.Everyone)]
+     private void PrepararFaseApuestasClientRpc(int numCards)
+     {
+         cardsInRound = numCards;
+@@ -143,10 +155,10 @@ public class BettingManager : NetworkBehaviour
+         InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
+     }
+ 
+-    [ClientRpc]
++    [Rpc(SendTo.Everyone)]
+     private void AvisarTurnoApuestaClientRpc(int turnoDe, int forbiddenBet, int apuestasRealizadas)
+     {
+-        int miIdLocal = (int)NetworkManager.Singleton.LocalClientId;
++        int miIdLocal = InteractionManager.Instance.MySeatIndex;
+ 
+         // Texto informativo en la parte superior
+         if (apuestasRealizadas > 0)
+@@ -187,18 +199,18 @@ public class BettingManager : NetworkBehaviour
+         }
+     }
+ 
+-    [ClientRpc]
++    [Rpc(SendTo.Everyone)]
+     private void RegistrarApuestaClientRpc(int playerIndex, int amount)
+     {
+         // Todos los ordenadores actualizan sus datos y perfiles visuales
+         InteractionManager.Instance.apuestas[playerIndex] = amount;
+         
+-        string nombre = (playerIndex == (int)NetworkManager.Singleton.LocalClientId) ? "T├Ü" : $"JUGADOR {playerIndex}";
++        string nombre = (playerIndex == InteractionManager.Instance.MySeatIndex) ? "T├Ü" : $"JUGADOR {playerIndex}";
+         InteractionManager.Instance.SetInfoMessage($"{nombre} APUESTA: {amount}");
+         InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
+     }
+ 
+-    [ClientRpc]
++    [Rpc(SendTo.Everyone)]
+     private void CerrarPanelClientRpc()
+     {
+         panelRoot.SetActive(false);
+@@ -218,9 +230,20 @@ public class BettingManager : NetworkBehaviour
+ private void EnviarApuestaServerRpc(int amount, RpcParams rpcParams = default) // Cambiado a RpcParams
+ {
+     ulong senderId = rpcParams.Receive.SenderClientId;
++    int senderSeat = -1;
++    
++    // Convertir senderId a seatIndex usando InteractionManager
++    for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
++    {
++        if (InteractionManager.Instance.GetClientIdForSeat(i) == senderId)
++        {
++            senderSeat = i;
++            break;
++        }
++    }
+     
+     // Validaci├│n de seguridad
+-    if ((ulong)currentBetterIndex != senderId) return; 
++    if (currentBetterIndex != senderSeat) return; 
+ 
+     // El servidor acepta la apuesta, avisa a todos y pasa turno
+     RegistrarApuestaClientRpc(currentBetterIndex, amount);
+diff --git a/Assets/Scripts/GameConfig.cs b/Assets/Scripts/GameConfig.cs
+index 36e58c4..de13785 100644
+--- a/Assets/Scripts/GameConfig.cs
++++ b/Assets/Scripts/GameConfig.cs
+@@ -4,6 +4,14 @@ public static class GameConfig
+ {
+     //1 para jugar contra 1 bot, 2 para jugar contra 2 etc
+     public static int nPlayers=1;
++    public static int nHumanPlayers=1;
++
++    // MONETIZACI├ôN POST-PARTIDA
++    public static int currentFee = 0;
++    public static int currentPrize = 0;
++    public static bool isPrivateMatch = false;
++    public static bool isHostLobby = false;
++    public static bool prizeAwarded = false;
+ 
+     //0: Version ultra facil
+     //1: Normal Mode por default
+diff --git a/Assets/Scripts/InteractionManager.cs b/Assets/Scripts/InteractionManager.cs
+index a3d45be..9cc6e45 100644
+--- a/Assets/Scripts/InteractionManager.cs
++++ b/Assets/Scripts/InteractionManager.cs
+@@ -10,9 +10,10 @@ public enum GameState { PLAYER_TURN, AI_TURN, WAITING }
+ public class InteractionManager : NetworkBehaviour
+ {
+     public static InteractionManager Instance;
+-    // A├▒ade esto al principio de tu InteractionManager
++
+     [Header("Control de Estado")]
+     public bool yaHeJugadoMiTurno = false;
++
+     [Header("Red")]
+     //Se pueden cambiar los persmisos de acceso a la variable
+     public NetworkVariable<int> totalJugadoresRed = new NetworkVariable<int>(2, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+@@ -49,6 +50,32 @@ public class InteractionManager : NetworkBehaviour
+     public UICard SelectedCard { get; private set; }
+     public bool isPaused = false;
+ 
++    // Bug 1: lambda guardada para desuscribir en OnNetworkDespawn
++    private System.Action<ulong> _onClientDisconnectHandler;
++    // Guard: evita que EsperarYGenerar se lance dos veces
++    private bool _mesaGenerada = false;
++
++    // SISTEMA DE ASIENTOS: NGO no garantiza clientIds secuenciales (pueden ser 0,7,8,9).
++    // El servidor asigna expl├¡citamente asiento 0..N-1 a cada cliente.
++    private int _mySeatIndex = 0;
++    public int MySeatIndex => _mySeatIndex;
++
++    private System.Collections.Generic.Dictionary<ulong, int> _clientToSeat
++        = new System.Collections.Generic.Dictionary<ulong, int>();
++    private System.Collections.Generic.Dictionary<int, ulong> _seatToClient
++        = new System.Collections.Generic.Dictionary<int, ulong>();
++
++    public bool IsPlayerConnectedAndHuman(int seatIndex)
++    {
++        return _seatToClient.TryGetValue(seatIndex, out ulong cid) && NetworkManager.Singleton.ConnectedClients.ContainsKey(cid);
++    }
++    
++    public ulong GetClientIdForSeat(int seatIndex)
++    {
++        if (_seatToClient.TryGetValue(seatIndex, out ulong cid)) return cid;
++        return ulong.MaxValue;
++    }
++
+     private void Awake()
+     {
+         if (Instance != null && Instance != this) Destroy(this.gameObject);
+@@ -66,47 +93,126 @@ public class InteractionManager : NetworkBehaviour
+     /// </summary>
+     public override void OnNetworkSpawn()
+     {
+-
++        // MONETIZACI├ôN: Cobro por adelantado (Opci├│n B) al entrar a la partida
++        if (GameConfig.currentFee > 0 && !GameConfig.prizeAwarded)
++        {
++            TopBarUI.Instance.GastarMonedas(GameConfig.currentFee);
++            Debug.Log($"[ECONOM├ìA] Partida arrancada. Fee deducido: {GameConfig.currentFee}");
++        }
+ 
+         if (IsServer)
+         {
+             totalJugadoresRed.Value = GameConfig.nPlayers < 2 ? 2 : GameConfig.nPlayers;
+-
+-            //Detecta la desconexion de un Jugador
+             NetworkManager.Singleton.OnClientDisconnectCallback += ControlarDesconexion;
++            // El servidor espera a que todos conecten y luego asigna asientos
++            StartCoroutine(AsignarAsientosYArrancar());
+         }
++        // else: los clientes esperan el RPC AsignarAsientosRpc para generar la mesa
+ 
+-        NetworkManager.Singleton.OnClientDisconnectCallback += (id) =>
++        // Bug 1: lambda para detectar ca├¡da del host en el cliente
++        _onClientDisconnectHandler = (id) =>
+         {
+-            // Si la ID que se desconecta es la m├¡a o la del servidor (0)
+-            // y no soy el servidor, significa que el Host ha cerrado la partida.
+-            if (!NetworkManager.Singleton.IsServer)
++            if (!IsServer && NetworkManager.Singleton.IsConnectedClient)
+             {
+-                SceneManager.LoadScene("MainMenu");
++                if (SessionNetworkManager.Instance != null)
++                    SessionNetworkManager.Instance.ExpulsarAlHubPorCaidaHost();
++                else
++                {
++                    NetworkManager.Singleton.Shutdown();
++                    UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
++                }
+             }
+         };
++        NetworkManager.Singleton.OnClientDisconnectCallback += _onClientDisconnectHandler;
++    }
+ 
+-        totalJugadoresRed.OnValueChanged += (valorViejo, valorNuevo) =>
+-        {
+-            if (valorNuevo > 0) StartCoroutine(EsperarYGenerar(valorNuevo));
+-        };
++    /// <summary>
++    /// Servidor: espera a que todos los clientes esperados conecten a NGO,
++    /// asigna asientos 0..N-1 de forma determinista y lo difunde via RPC.
++    /// </summary>
++    private IEnumerator AsignarAsientosYArrancar()
++    {
++        // En lugar de esperar a totalJugadoresRed.Value, esperamos a los humanos reales.
++        // Si por alg├║n motivo es <= 0 (partida de pr├íctica o viejo flujo), usamos totalJugadoresRed.
++        int esperados = GameConfig.nHumanPlayers;
++        if (esperados <= 0) esperados = totalJugadoresRed.Value;
+ 
+-        if (totalJugadoresRed.Value > 0)
++        float timeout = 15f;
++        while (NetworkManager.Singleton.ConnectedClientsIds.Count < esperados && timeout > 0)
+         {
+-            StartCoroutine(EsperarYGenerar(totalJugadoresRed.Value));
++            timeout -= Time.deltaTime;
++            yield return null;
+         }
++        if (timeout <= 0)
++            Debug.LogWarning($"[ASIENTOS] Timeout: solo {NetworkManager.Singleton.ConnectedClientsIds.Count}/{esperados} conectaron.");
++
++        // Asignamos asientos en orden ascendente de clientId para que sea determinista
++        var ids = new System.Collections.Generic.List<ulong>(NetworkManager.Singleton.ConnectedClientsIds);
++        ids.Sort();
++        ulong[] asignaciones = ids.ToArray();
++
++        Debug.Log($"[ASIENTOS] Asignando {asignaciones.Length} asientos humanos en mesa de {totalJugadoresRed.Value}.");
++        AsignarAsientosRpc(asignaciones, totalJugadoresRed.Value);
+     }
+-    private void ControlarDesconexion(ulong clientId)
++
++    [Rpc(SendTo.Everyone)]
++    private void AsignarAsientosRpc(ulong[] asignaciones, int totalMesa)
+     {
++        _clientToSeat.Clear();
++        _seatToClient.Clear();
++        for (int s = 0; s < asignaciones.Length; s++)
++        {
++            _clientToSeat[asignaciones[s]] = s;
++            _seatToClient[s] = asignaciones[s];
++        }
++
++        ulong myId = NetworkManager.Singleton.LocalClientId;
++        if (_clientToSeat.TryGetValue(myId, out int seat))
++            _mySeatIndex = seat;
++        else
++            Debug.LogError($"[ASIENTOS] ClientId {myId} no encontrado en la asignaci├│n.");
++
++        Debug.Log($"[ASIENTOS] ClientId={myId} ÔåÆ Asiento #{_mySeatIndex}. Generando mesa para {totalMesa}.");
++
++        if (!_mesaGenerada)
++        {
++            _mesaGenerada = true;
++            StartCoroutine(EsperarYGenerar(totalMesa));
++        }
++    }
+ 
+ 
++    public override void OnNetworkDespawn()
++    {
++        if (NetworkManager.Singleton != null)
++        {
++            NetworkManager.Singleton.OnClientDisconnectCallback -= ControlarDesconexion;
++            if (_onClientDisconnectHandler != null)
++                NetworkManager.Singleton.OnClientDisconnectCallback -= _onClientDisconnectHandler;
++        }
++        _onClientDisconnectHandler = null;
++        _mesaGenerada = false;
++        _mySeatIndex = 0;
++        _clientToSeat.Clear();
++        _seatToClient.Clear();
++    }
++
++    private void ControlarDesconexion(ulong clientId)
++    {
++        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening) return;
+         if (!IsServer) return;
+ 
+-        int playerIndex = (int)clientId;
+-        Debug.Log($"ÔÜá´©Å El Jugador {playerIndex} se ha desconectado. Queda eliminado.");
++        // Convertimos clientId ÔåÆ seatIndex usando el mapa del servidor
++        if (!_clientToSeat.TryGetValue(clientId, out int playerIndex))
++        {
++            Debug.LogWarning($"[DESCONEXION] clientId {clientId} no tiene asiento asignado (ya procesado).");
++            return;
++        }
++        if (vidas == null || playerIndex < 0 || playerIndex >= vidas.Length) return;
++        Debug.Log($"ÔÜá´©Å ClientId={clientId} (Asiento {playerIndex}) se ha desconectado.");
+ 
+         // 1. Lo eliminamos de la partida (0 vidas)
+-        if (playerIndex < vidas.Length) vidas[playerIndex] = 0;
++        vidas[playerIndex] = 0;
+ 
+         // 2. RECUPERAR CARTAS A LA BARAJA
+         if (playerIndex < playerHands.Count && playerHands[playerIndex] != null)
+@@ -143,15 +249,21 @@ public class InteractionManager : NetworkBehaviour
+             BettingManager.Instance.FuerzaPasarTurnoDesconectado(playerIndex);
+         }
+ 
+-        else if (currentTurnIndex == playerIndex)
++        else
+         {
+-            ChangeTurn();
++            // Si est├íbamos en la fase de jugar cartas, comprobamos si la mesa ahora est├í llena
++            if (TableZone.Instance != null) TableZone.Instance.ForzarValidacionMesa();
++
++            if (currentTurnIndex == playerIndex && !isPaused)
++            {
++                ChangeTurn();
++            }
+         }
+     }
+     [Rpc(SendTo.Everyone)]
+     private void SincronizarDesconexionClientRpc(int idJugadorQueSeFue)
+     {
+-        vidas[idJugadorQueSeFue] = 0;
++        if (!IsServer) vidas[idJugadorQueSeFue] = 0;
+         SetInfoMessage($"El Jugador {idJugadorQueSeFue} se ha desconectado.");
+         ActualizarTodosLosPerfilesUI();
+ 
+@@ -159,12 +271,14 @@ public class InteractionManager : NetworkBehaviour
+         int humanosVivos = 0;
+         for (int i = 0; i < totalPlayers; i++)
+         {
+-            if (vidas[i] > 0 && NetworkManager.Singleton.ConnectedClients.ContainsKey((ulong)i))
++            // Usamos _seatToClient para saber qu├® clientId ocupa el asiento i
++            if (vidas[i] > 0 && _seatToClient.TryGetValue(i, out ulong cid)
++                && NetworkManager.Singleton.ConnectedClients.ContainsKey(cid))
+                 humanosVivos++;
+         }
+ 
+         // Si me he quedado yo solo como humano vivo, gano autom├íticamente
+-        if (humanosVivos <= 1 && vidas[(int)NetworkManager.Singleton.LocalClientId] > 0)
++        if (humanosVivos <= 1 && vidas[_mySeatIndex] > 0)
+         {
+             if (PauseManager.Instance != null) PauseManager.Instance.TriggerGameOver(1);
+         }
+@@ -181,19 +295,13 @@ public class InteractionManager : NetworkBehaviour
+     private void TerminarPartidaPorAbandonoClientRpc(int ganadorIndex)
+     {
+         isPaused = true;
+-        int localId = (int)NetworkManager.Singleton.LocalClientId;
+ 
+-        // Si yo soy el ganador (el que se ha quedado en la sala)
+-        if (localId == ganadorIndex)
+-        {
++        if (_mySeatIndex == ganadorIndex)
+             SetInfoMessage("┬íTODOS TUS RIVALES HAN ABANDONADO! ┬íVICTORIA!");
+-        }
+ 
+-        // Mostramos el cartel de Game Over
+         if (PauseManager.Instance != null)
+         {
+-            // Te damos el puesto 1 si eres el ganador, o un puesto peor si fueras otro
+-            int puesto = (localId == ganadorIndex) ? 1 : 2;
++            int puesto = (_mySeatIndex == ganadorIndex) ? 1 : 2;
+             PauseManager.Instance.TriggerGameOver(puesto);
+         }
+     }
+@@ -207,15 +315,15 @@ public class InteractionManager : NetworkBehaviour
+ 
+     private void ArrancarMesaLocal(int numJugadores)
+     {
+-        Debug.Log($"Soy el ID {NetworkManager.Singleton.LocalClientId} y voy a generar mesa para {numJugadores}");
+-        IniciarPartidaEnRed(numJugadores);
++        Debug.Log($"[ASIENTOS] ClientId={NetworkManager.Singleton.LocalClientId} (Asiento #{_mySeatIndex}) generando mesa para {numJugadores}");
++        IniciarPartidaEnRed(numJugadores, _mySeatIndex);
+     }
+ 
+-    public void IniciarPartidaEnRed(int totalJugadoresEnSala)
++    public void IniciarPartidaEnRed(int totalJugadoresEnSala, int localSeatIndex)
+     {
+         if (TableManagerLayout.Instance != null)
+         {
+-            TableManagerLayout.Instance.GenerarMesa(totalJugadoresEnSala);
++            TableManagerLayout.Instance.GenerarMesa(totalJugadoresEnSala, localSeatIndex);
+ 
+             if (TableManagerLayout.Instance.manosActivas.Count >= 2)
+             {
+@@ -235,18 +343,12 @@ public class InteractionManager : NetworkBehaviour
+                     bazasGanadas[i] = 0;
+                 }
+ 
+-                if (IsServer) //Sorteo de quien empieza al principio
++                if (IsServer)
+                 {
+-
+                     int sorteo = Random.Range(0, totalPlayers);
+-
+-                    // Asignamos el resultado al manoMesaIndex
+                     manoMesaIndex = sorteo;
+-
+-                    // El turno actual empieza siendo el del elegido
+                     currentTurnIndex = manoMesaIndex;
+-
+-                    Debug.Log($"­ƒÄ▓ SORTEO: El Jugador {manoMesaIndex} empieza la partida.");
++                    Debug.Log($"­ƒÄ▓ SORTEO: El Asiento {manoMesaIndex} empieza la partida.");
+                 }
+             }
+         }
+@@ -290,24 +392,26 @@ public class InteractionManager : NetworkBehaviour
+     private void SincronizarTurnoClientRpc(int nuevoTurno)
+     {
+         currentTurnIndex = nuevoTurno;
+-        int localId = (int)NetworkManager.Singleton.LocalClientId;
+-
+ 
+         if (vidas[currentTurnIndex] <= 0)
+         {
+             currentState = GameState.WAITING;
+-            return; // Los eliminados no juegan ni piensan
++            return;
+         }
+ 
+-        currentState = (currentTurnIndex == localId) ? GameState.PLAYER_TURN : GameState.WAITING;
++        // Usamos _mySeatIndex (NO LocalClientId) para saber si es nuestro turno
++        currentState = (currentTurnIndex == _mySeatIndex) ? GameState.PLAYER_TURN : GameState.WAITING;
+ 
+         UpdateVisualStates();
+         ClearSelection();
+ 
+         if (IsServer)
+         {
+-            bool isHuman = NetworkManager.Singleton.ConnectedClients.ContainsKey((ulong)currentTurnIndex);
+-            if (!isHuman)
++            // Comprobamos si el asiento actual pertenece a un humano usando el mapa de asientos
++            bool currentPlayerIsHuman = _seatToClient.TryGetValue(currentTurnIndex, out ulong cid)
++                                        && NetworkManager.Singleton.ConnectedClients.ContainsKey(cid);
++
++            if (!currentPlayerIsHuman)
+             {
+                 currentState = GameState.AI_TURN;
+                 StartCoroutine(AITurnRoutine());
+@@ -350,22 +454,14 @@ public class InteractionManager : NetworkBehaviour
+     // ========================================================================
+     public void SelectCard(UICard card)
+     {
+-        int localId = (int)NetworkManager.Singleton.LocalClientId;
+-        bool isMyCard = card.transform.parent == playerHands[localId].transform;
++        bool isMyCard = card.transform.parent == playerHands[_mySeatIndex].transform;
+ 
+-        // Si soy un humano en mi turno
+         bool canSelectAsHuman = (currentState == GameState.PLAYER_TURN && isMyCard);
+-        // Si el Servidor est├í controlando un Bot (solo el Host puede hacer esto)
+         bool canSelectAsAI = (IsServer && currentState == GameState.AI_TURN && card.transform.parent == playerHands[currentTurnIndex].transform);
+ 
+         if (canSelectAsHuman || canSelectAsAI)
+         {
+-            if (SelectedCard == card)
+-            {
+-                ClearSelection();
+-                return;
+-            }
+-
++            if (SelectedCard == card) { ClearSelection(); return; }
+             if (SelectedCard != null) SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
+             SelectedCard = card;
+             SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.yellow;
+@@ -384,12 +480,9 @@ public class InteractionManager : NetworkBehaviour
+     {
+         if (isPaused || playerHands.Count == 0) return;
+ 
+-        int localId = (int)NetworkManager.Singleton.LocalClientId;
+-
+         for (int i = 0; i < playerHands.Count; i++)
+         {
+-            // Solo brilla y es tocable si eres T├Ü, y es TU turno.
+-            bool isMyTurnAndMyHand = (i == currentTurnIndex && i == localId);
++            bool isMyTurnAndMyHand = (i == currentTurnIndex && i == _mySeatIndex);
+             SetGroupState(playerHands[i], isMyTurnAndMyHand, isMyTurnAndMyHand ? 1f : 0.5f);
+         }
+     }
+@@ -534,9 +627,8 @@ public class InteractionManager : NetworkBehaviour
+     private void SincronizarGanadorBazaClientRpc(int winnerIndex, int totalBazasDelGanador)
+     {
+         bazasGanadas[winnerIndex] = totalBazasDelGanador;
+-        int localId = (int)NetworkManager.Singleton.LocalClientId;
+ 
+-        if (winnerIndex == localId) SetInfoMessage("┬íT├Ü TIENES LA CARTA M├üS ALTA!");
++        if (winnerIndex == _mySeatIndex) SetInfoMessage("┬íT├Ü TIENES LA CARTA M├üS ALTA!");
+         else SetInfoMessage($"┬íEL JUGADOR {winnerIndex} TIENE LA CARTA M├üS ALTA!");
+ 
+         ActualizarTodosLosPerfilesUI();
+@@ -547,15 +639,11 @@ public class InteractionManager : NetworkBehaviour
+     // ========================================================================
+     public void ActualizarTodosLosPerfilesUI()
+     {
+-        int localId = 0;
+-        if (NetworkManager.Singleton != null && (NetworkManager.Singleton.IsClient || NetworkManager.Singleton.IsHost))
+-            localId = (int)NetworkManager.Singleton.LocalClientId;
+-
+         for (int i = 0; i < totalPlayers; i++)
+         {
+             if (TableManagerLayout.Instance.perfilesActivos.Count > i)
+             {
+-                string nombre = (i == localId) ? "T├Ü" : $"JUGADOR {i}";
++                string nombre = (i == _mySeatIndex) ? "T├Ü" : $"JUGADOR {i}";
+                 TableManagerLayout.Instance.perfilesActivos[i].ActualizarPerfil(nombre, vidas[i], bazasGanadas[i], apuestas[i]);
+             }
+         }
+@@ -569,17 +657,14 @@ public class InteractionManager : NetworkBehaviour
+     public void RefreshHandVisibility()
+     {
+         if (playerHands == null || playerHands.Count == 0) return;
+-        int localId = 0;
+-        if (NetworkManager.Singleton != null && (NetworkManager.Singleton.IsClient || NetworkManager.Singleton.IsHost))
+-            localId = (int)NetworkManager.Singleton.LocalClientId;
+ 
+         for (int i = 0; i < playerHands.Count; i++)
+         {
+             CanvasGroup hand = playerHands[i];
+             if (hand == null) continue;
+ 
+-            bool shouldBeFaceUp = (i == localId);
+-            if (currentRoundCards == 1) shouldBeFaceUp = (i != localId);
++            bool shouldBeFaceUp = (i == _mySeatIndex);
++            if (currentRoundCards == 1) shouldBeFaceUp = (i != _mySeatIndex);
+ 
+             foreach (Transform child in hand.transform)
+             {
+@@ -596,7 +681,14 @@ public class InteractionManager : NetworkBehaviour
+         if (suit == "Picas") return 2;
+         return 1;
+     }
+-
++    /*public override void OnNetworkDespawn()
++{
++    if (NetworkManager.Singleton != null)
++    {
++        NetworkManager.Singleton.OnClientDisconnectCallback -= ControlarDesconexion;
++        NetworkManager.Singleton.OnClientDisconnectCallback -= _onClientDisconnectHandler;
++    }
++}*/
+     public void StartNewGame() { SceneManager.LoadScene(SceneManager.GetActiveScene().name); }
+     public void ToggleAIDebugView() { isDebugAIVisible = !isDebugAIVisible; RefreshHandVisibility(); }
+ }
+\ No newline at end of file
+diff --git a/Assets/Scripts/MainMenuManager.cs b/Assets/Scripts/MainMenuManager.cs
+index c75de25..1ade179 100644
+--- a/Assets/Scripts/MainMenuManager.cs
++++ b/Assets/Scripts/MainMenuManager.cs
+@@ -12,7 +12,7 @@ public class MainMenuManager : MonoBehaviour
+     {
+         if (selectorJugadores != null)
+         {
+-            // OJO: Si nPlayers es 1 (1 Bot), el ├¡ndice del selector es el 0. Le restamos 1.
++          
+             selectorJugadores.EstablecerIndice(GameConfig.nPlayers - 1);
+         }
+         
+@@ -41,15 +41,15 @@ public class MainMenuManager : MonoBehaviour
+         CardDatabase.deck.Clear();
+     }
+ 
+-    // --- ┬íNUEVO VIAJE EN RED! ---
++
+     if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
+     {
+-        // El Host conduce el autob├║s y cambia la escena para todos
++        
+         NetworkManager.Singleton.SceneManager.LoadScene("MainGame", LoadSceneMode.Single);
+     }
+     else
+     {
+-        // El Cliente simplemente espera (puedes poner un texto en la UI aqu├¡ si quieres)
++        
+         Debug.Log("Eres un cliente. Esperando a que el Host inicie la partida...");
+     }
+ }
+diff --git a/Assets/Scripts/MenuLobbyUI.cs b/Assets/Scripts/MenuLobbyUI.cs
+index da70f6e..4655c8a 100644
+--- a/Assets/Scripts/MenuLobbyUI.cs
++++ b/Assets/Scripts/MenuLobbyUI.cs
+@@ -47,6 +47,8 @@ public class MenuLobbyUI : MonoBehaviour
+ 
+     private int feeSalaActual = 0;
+     private int premioSalaActual = 0;
++    private bool procesandoPeticionRed = false;
++    private float tiempoEsperaArranque = 5f; // Los 5 segundos de cortes├¡a
+ 
+     private void Start()
+     {
+@@ -78,8 +80,34 @@ public class MenuLobbyUI : MonoBehaviour
+ 
+             if (NetworkManager.Singleton.IsServer)
+             {
+-                if (CardDatabase.deck != null) CardDatabase.deck.Clear();
+-                NetworkManager.Singleton.SceneManager.LoadScene("MainGame", UnityEngine.SceneManagement.LoadSceneMode.Single);
++                var session = SessionNetworkManager.Instance?.currentSession;
++                if (session != null)
++                {
++                    // FUNCIONALIDAD PRIVADA: Rellenar con bots.
++                    // Si configuraste 6 pero sois 4, nPlayers = 6. 
++                    // El InteractionManager crear├í 6 asientos y 2 de ellos (sin clientId) ser├ín bots.
++                    GameConfig.nPlayers = session.MaxPlayers;
++                    int jugadoresConectadosUGS = session.Players.Count;
++                    GameConfig.nHumanPlayers = jugadoresConectadosUGS;
++                    
++                    // MONETIZACI├ôN: Configuramos la partida para que al cargar la escena se cobren las monedas
++                    GameConfig.currentFee = int.Parse(MenuManager.Instance.privateEntryFee.opciones[MenuManager.Instance.privateEntryFee.ObtenerIndice()]);
++                    GameConfig.currentPrize = MenuManager.Instance.ObtenerPremioPrivadaCalculado();
++                    GameConfig.isPrivateMatch = true;
++                    GameConfig.isHostLobby = true;
++                    GameConfig.prizeAwarded = false;
++
++                    this.enabled = false;
++                    if (CardDatabase.deck != null) CardDatabase.deck.Clear();
++                    
++                    StartCoroutine(EsperarConexionesYCargar(jugadoresConectadosUGS));
++                }
++                else
++                {
++                    // Fallback de seguridad
++                    if (CardDatabase.deck != null) CardDatabase.deck.Clear();
++                    NetworkManager.Singleton.SceneManager.LoadScene("MainGame", UnityEngine.SceneManagement.LoadSceneMode.Single);
++                }
+             }
+         });
+         
+@@ -88,6 +116,9 @@ public class MenuLobbyUI : MonoBehaviour
+ 
+     private void OnEnable()
+     {
++        // El timer siempre empieza en 5f. El reset lo garantiza OnDisable.
++        tiempoEsperaArranque = 5f;
++
+         // Suscripci├│n temprana al evento de conexi├│n f├¡sica de Netcode
+         if (NetworkManager.Singleton != null)
+         {
+@@ -102,6 +133,9 @@ public class MenuLobbyUI : MonoBehaviour
+         {
+             NetworkManager.Singleton.OnClientConnectedCallback -= EvaluacionCondicionTransicion;
+         }
++        // Resetear el timer aqu├¡ garantiza que siempre empiece limpio en el pr├│ximo OnEnable,
++        // independientemente de c├│mo termin├│ la sesi├│n anterior (abandono, error, timeout...).
++        tiempoEsperaArranque = 5f;
+     }
+ 
+     // El Callback Oficial del Host para cambiar de escena
+@@ -113,20 +147,24 @@ public class MenuLobbyUI : MonoBehaviour
+         if (SessionNetworkManager.Instance != null && SessionNetworkManager.Instance.currentSession != null)
+         {
+             var session = SessionNetworkManager.Instance.currentSession;
+-            
+-            // Verificamos que estamos en Matchmaking p├║blico
++
++            // Solo aplica en matchmaking p├║blico
+             if (!session.IsPrivate)
+             {
+                 int conexionesFisicas = NetworkManager.Singleton.ConnectedClientsList.Count;
+                 Debug.Log($"[MATCHMAKING] Nodo {clientId} validado en red. Ocupaci├│n f├¡sica: {conexionesFisicas}/{session.MaxPlayers}");
+ 
+-                // Si se llena f├¡sicamente la sala, mandamos a todos al juego
+-                if (conexionesFisicas == session.MaxPlayers)
++                bool salaLlena = (conexionesFisicas >= session.MaxPlayers);
++                if (salaLlena)
+                 {
+-                    Debug.Log("[MATCHMAKING] ┬íCu├│rum topol├│gico absoluto alcanzado! Viajando a MainGame...");
++                    Debug.Log("[MATCHMAKING] Sala NGO llena. Preparando viaje a MainGame...");
++                    this.enabled = false; // Paramos el Update
++                    // BUG-FIX: fijar el n├║mero de jugadores AQU├ì tambi├®n,
++                    // porque este path puede dispararse ANTES de que el timer llegue a 0
++                    GameConfig.nPlayers = session.Players.Count;
++                    GameConfig.nHumanPlayers = session.Players.Count;
+                     if (CardDatabase.deck != null) CardDatabase.deck.Clear();
+-                    
+-                    NetworkManager.Singleton.SceneManager.LoadScene("MainGame", UnityEngine.SceneManagement.LoadSceneMode.Single);
++                    StartCoroutine(EsperarConexionesYCargar(conexionesFisicas));
+                 }
+             }
+         }
+@@ -141,61 +179,104 @@ public class MenuLobbyUI : MonoBehaviour
+         if (panelInfoPartida != null) panelInfoPartida.SetActive(false);
+     }
+ 
+-   private void Update()
++    private int _lastConectadosNube = -1;
++    private string _listaGeneradaCache = "";
++
++  private void Update()
+     {
+-        if (SessionNetworkManager.Instance != null && SessionNetworkManager.Instance.currentSession != null)
++        if (SessionNetworkManager.Instance == null || SessionNetworkManager.Instance.currentSession == null) return;
++        if (MenuManager.Instance == null) return;
++        var session = SessionNetworkManager.Instance.currentSession;
++        int conectadosNube = session.Players.Count;
++        int maxJugadores = session.MaxPlayers;
++
++        if (conectadosNube != _lastConectadosNube)
+         {
+-            var session = SessionNetworkManager.Instance.currentSession;
+-            int conectadosNube = session.Players.Count;
+-            int maxJugadores = session.MaxPlayers;
++            _lastConectadosNube = conectadosNube;
++            int premioActual = CalcularPremioDinamico(conectadosNube, maxJugadores);
++            string textoPremio = $"{premioActual} $";
++
++            if (txtPremioLobbyHost != null) txtPremioLobbyHost.text = textoPremio;
++            if (txtPremioLobbyMatchmaking != null) txtPremioLobbyMatchmaking.text = textoPremio;
++            if (txtPremioLobbyCliente != null) txtPremioLobbyCliente.text = textoPremio;
++            if (txtDetallePrize != null) txtDetallePrize.text = textoPremio;
+ 
+-            // Actualizaci├│n visual de textos
+-            string textoContador = $"{conectadosNube}/{maxJugadores}";
++            string textoContador = session.IsPrivate ? $"{conectadosNube}/{maxJugadores}" : $"{conectadosNube}/{conectadosNube}";
+             if (txtJugadoresHost != null) txtJugadoresHost.text = textoContador;
+             if (txtJugadoresCliente != null) txtJugadoresCliente.text = textoContador;
+             if (txtJugadoresMatchmaking != null) txtJugadoresMatchmaking.text = textoContador;
+ 
+-            // Actualizaci├│n de lista de nombres
+-            string listaGenerada = "";
++            string listaBase = "";
+             for (int i = 0; i < conectadosNube; i++)
+             {
+-                if (i == 0) listaGenerada += session.IsHost ? "T├Ü (Host)\n" : "HOST\n";
+-                else listaGenerada += $"JUGADOR {i}\n";
++                if (i == 0) listaBase += session.IsHost ? "T├Ü (Host)\n" : "HOST\n";
++                else listaBase += $"JUGADOR {i}\n";
++            }
++            // Guardamos la base de la lista. En matchmaking se le a├▒adir├í el timer cada frame.
++            _listaGeneradaCache = listaBase;
++            
++            // Si es privada, ya podemos setear el texto final (porque no hay timer)
++            if (session.IsPrivate)
++            {
++                if (txtListaNombresHost != null) txtListaNombresHost.text = _listaGeneradaCache;
++                if (txtListaNombresCliente != null) txtListaNombresCliente.text = _listaGeneradaCache;
++                if (txtListaNombresMatchmaking != null) txtListaNombresMatchmaking.text = _listaGeneradaCache;
+             }
+-            if (txtListaNombresMatchmaking != null) txtListaNombresMatchmaking.text = listaGenerada;
++        }
++
++        // --- L├ôGICA DE AUTOSTART Y CUENTA ATR├üS (SOLO P├ÜBLICAS) ---
++        if (!session.IsPrivate)
++        {
++            // Restamos tiempo en cada frame
++            tiempoEsperaArranque -= Time.deltaTime;
++
++            // A├▒adimos la cuenta atr├ís visualmente a la lista de jugadores
++            string listaFinal = _listaGeneradaCache;
++            if (tiempoEsperaArranque > 0)
++            {
++                listaFinal += $"\n<color=yellow>┬íPartida encontrada!\nIniciando en {Mathf.CeilToInt(tiempoEsperaArranque)}...</color>";
++            }
++            else
++            {
++                listaFinal += "\n<color=green>┬íConectando...</color>";
++            }
++
++            // 3. ASIGNACI├ôN A TODAS LAS LISTAS (Con el contador incluido)
++            if (txtListaNombresMatchmaking != null) txtListaNombresMatchmaking.text = listaFinal;
++            if (txtListaNombresHost != null) txtListaNombresHost.text = listaFinal;
++            if (txtListaNombresCliente != null) txtListaNombresCliente.text = listaFinal;
+ 
+-            // AutoStar del MatchMaking
+-            if (session.IsHost && !session.IsPrivate)
++            // 4. AutoStart (Solo el Host ejecuta la carga de escena)
++            if (session.IsHost && NetworkManager.Singleton.IsServer)
+             {
+                 int conectadosRed = NetworkManager.Singleton.ConnectedClientsList.Count;
+ 
+-                // LOG DE DIAGN├ôSTICO
+-                if (Time.frameCount % 120 == 0) 
++                if (Time.frameCount % 120 == 0)
+                 {
+-                    Debug.Log($"[DIAGN├ôSTICO MM] Nube: {conectadosNube}/{maxJugadores} | Red NGO: {conectadosRed}/{maxJugadores}");
++                    Debug.Log($"[DIAGN├ôSTICO] Nube: {conectadosNube}/{maxJugadores} | Red NGO: {conectadosRed}/{maxJugadores}");
+                 }
+ 
+-                // Condici├│n de victoria: Si por RED ya estamos todos, arrancamos sin mirar a la nube si hace falta
+-                if (conectadosRed >= maxJugadores)
++                if (tiempoEsperaArranque <= 0)
+                 {
+-                    Debug.Log($"[MATCHMAKING] ┬íCONDICI├ôN CUMPLIDA! Red NGO detecta {conectadosRed} jugadores. Lanzando partida...");
+-                    
+-                    if (NetworkManager.Singleton.IsServer)
+-                    {
+-                        if (CardDatabase.deck != null) CardDatabase.deck.Clear();
+-                        
+-                        // Verificamos si el SceneManager est├í listo
+-                        if (NetworkManager.Singleton.SceneManager != null)
+-                        {
+-                            Debug.Log("Cargando escena MainGame...");
+-                            NetworkManager.Singleton.SceneManager.LoadScene("MainGame", UnityEngine.SceneManagement.LoadSceneMode.Single);
+-                            this.enabled = false; // Desactivamos este Update para evitar doble carga
+-                        }
+-                        else
+-                        {
+-                            Debug.LogError("ERROR CR├ìTICO: SceneManager es NULL en el NetworkManager.");
+-                        }
+-                    }
++                    // Desactivamos YA para no volver a entrar en este bloque
++                    this.enabled = false;
++
++                    // BUG-FIX: fijamos el n├║mero de jugadores con el valor de la NUBE
++                    // (puede ser < maxJugadores si el timer expir├│ antes de que la sala llenara)
++                    GameConfig.nPlayers = conectadosNube;
++                    GameConfig.nHumanPlayers = conectadosNube;
++
++                    // MONETIZACI├ôN: Partida p├║blica auto-start
++                    GameConfig.currentFee = 200; // El feeMatchmaking hardcodeado en MenuManager
++                    GameConfig.currentPrize = 200 * 4;
++                    GameConfig.isPrivateMatch = false;
++                    GameConfig.isHostLobby = true; // Somos el Host de esta p├║blica
++                    GameConfig.prizeAwarded = false;
++
++                    if (CardDatabase.deck != null) CardDatabase.deck.Clear();
++
++                    Debug.Log($"[MATCHMAKING] Timer expirado. Esperando handshake NGO para {conectadosNube} jugadores...");
++                    StartCoroutine(EsperarConexionesYCargar(conectadosNube));
+                 }
+             }
+         }
+@@ -204,16 +285,38 @@ public class MenuLobbyUI : MonoBehaviour
+     // =======================================================
+     // 1. EL HOST CREA LA SALA
+     // =======================================================
+-    public async void CrearSalaPrivadaDesdeUI()
++    // CORRECCI├ôN Bug 5: wrapper s├¡ncrono p├║blico + l├│gica real en Task privado
++    public void CrearSalaPrivadaDesdeUI() => _ = CrearSalaPrivadaDesdeUIAsync();
++
++    private async System.Threading.Tasks.Task CrearSalaPrivadaDesdeUIAsync()
+     {
+-        if (btnStartHost != null) btnStartHost.interactable = false;
++        // 1. CANDADO L├ôGICO: Si ya est├í creando una, ignoramos m├ís clics
++        if (procesandoPeticionRed) return; 
++        // 2. EXTRAER COSTES Y VALIDAR ECONOM├ìA ANTES DE NADA
++        int entryFee = int.Parse(MenuManager.Instance.privateEntryFee.opciones[MenuManager.Instance.privateEntryFee.ObtenerIndice()]);
++
++        if (TopBarUI.Instance != null && !TopBarUI.Instance.TieneSuficientes(entryFee))
++        {
++            Debug.LogWarning("<color=red>FONDOS INSUFICIENTES:</color> No puedes crear esta sala.");
++            
++            // Opcional: Podr├¡as hacer que el texto del coste parpadee en rojo aqu├¡
++            if (txtPrecioLobbyHost != null) txtPrecioLobbyHost.text = "<color=red>SIN DINERO</color>";
++            
++            return; // CORTAMOS EL C├ôDIGO AQU├ì. No hay dinero, no hay sala.
++        }
++        procesandoPeticionRed = true;
+ 
++        // 2. CANDADO VISUAL: Desactivamos el bot├│n de crear
++        if (bCreate != null) bCreate.interactable = false;
++        if (btnStartHost != null) btnStartHost.interactable = false;
++        
++        Debug.Log("Lanzando petici├│n de partida Privada a la nube...");
++        
+         pToolBar.SetActive(false);
+         bBack.gameObject.SetActive(false);
+ 
+-
+         int maxJugadores = MenuManager.Instance.privatePlayers.ObtenerIndice() + 2;
+-        int entryFee = int.Parse(MenuManager.Instance.privateEntryFee.opciones[MenuManager.Instance.privateEntryFee.ObtenerIndice()]);
++        //int entryFee = int.Parse(MenuManager.Instance.privateEntryFee.opciones[MenuManager.Instance.privateEntryFee.ObtenerIndice()]);
+         int prizeTotal = MenuManager.Instance.ObtenerPremioPrivadaCalculado();
+ 
+         int difficulty = MenuManager.Instance.privateDifficulty.ObtenerIndice();
+@@ -224,14 +327,15 @@ public class MenuLobbyUI : MonoBehaviour
+         GameConfig.difficulty = difficulty;
+         GameConfig.nPlayers = maxJugadores;
+ 
++        // Llamada pesada a la nube
+         string codigo = await SessionNetworkManager.Instance.CrearSalaPrivada(maxJugadores, entryFee, prizeTotal, difficulty, turnTime);
+ 
+         if (!string.IsNullOrEmpty(codigo))
+         {
+             if (txtCodigoGeneradoHost != null) txtCodigoGeneradoHost.text = $"CODE: {codigo}";
+ 
+-            if (txtPrecioLobbyHost != null) txtPrecioLobbyHost.text = $"Fee: {entryFee} M";
+-            if (txtPremioLobbyHost != null) txtPremioLobbyHost.text = $"Prize: {prizeTotal} M";
++            if (txtPrecioLobbyHost != null) txtPrecioLobbyHost.text = $"{entryFee}";
++            if (txtPremioLobbyHost != null) txtPremioLobbyHost.text = $"{prizeTotal}";
+ 
+             MenuManager.Instance.MostrarPrivateLobby();
+ 
+@@ -240,15 +344,21 @@ public class MenuLobbyUI : MonoBehaviour
+         else
+         {
+             Debug.LogError("Error en la UI: Fall├│ la creaci├│n de la sala.");
+-            if (btnStartHost != null) btnStartHost.interactable = true;
+-            pToolBar.SetActive(true); // Restaura la barra si falla la creaci├│n
++            pToolBar.SetActive(true); 
+             bBack.gameObject.SetActive(true);
+         }
++
++        // 3. LIBERAR CANDADOS
++        if (bCreate != null) bCreate.interactable = true;
++        procesandoPeticionRed = false;
+     }
+     // =======================================================
+     // 2. CLIENTE FASE B├ÜSQUEDA (Bot├│n Search)
+     // =======================================================
+-    private async void OnSearchClicked()
++    // CORRECCI├ôN Bug 5: wrapper s├¡ncrono para el bot├│n Search
++    private void OnSearchClicked() => _ = OnSearchClickedAsync();
++
++    private async System.Threading.Tasks.Task OnSearchClickedAsync()
+     {
+         string codigo = inputCodigoAmigo.text.Trim().ToUpper();
+         if (string.IsNullOrEmpty(codigo)) return;
+@@ -267,8 +377,8 @@ public class MenuLobbyUI : MonoBehaviour
+             if (panelInfoPartida != null) panelInfoPartida.SetActive(true);
+ 
+             // if (txtDetalleJugadores != null) txtDetalleJugadores.text = $"Jugadores: {session.Players.Count}/{session.MaxPlayers}";
+-            if (txtDetalleFee != null) txtDetalleFee.text = $"Entrada: {feeSalaActual} M";
+-            if (txtDetallePrize != null) txtDetallePrize.text = $"Premio: {premioSalaActual} M"; // Pintamos el premio extra├¡do de la nube
++            if (txtDetalleFee != null) txtDetalleFee.text = $"{feeSalaActual}";
++            if (txtDetallePrize != null) txtDetallePrize.text = $"{premioSalaActual}"; // Pintamos el premio extra├¡do de la nube
+ 
+             if (TopBarUI.Instance.TieneSuficientes(feeSalaActual))
+             {
+@@ -280,7 +390,7 @@ public class MenuLobbyUI : MonoBehaviour
+             {
+                 if (txtDetalleFee != null) txtDetalleFee.text = "<color=red>┬íDINERO INSUFICIENTE!</color>";
+                 btnSearch.interactable = true;
+-                SessionNetworkManager.Instance.AbandonarSala();
++                await SessionNetworkManager.Instance.AbandonarSala();
+             }
+         }
+         else
+@@ -295,7 +405,10 @@ public class MenuLobbyUI : MonoBehaviour
+     // =======================================================
+     // 3. CLIENTE FASE UNI├ôN (Bot├│n Join)
+     // =======================================================
+-    private async void OnJoinConfirmed()
++    // CORRECCI├ôN Bug 5: wrapper s├¡ncrono para el bot├│n Join
++    private void OnJoinConfirmed() => _ = OnJoinConfirmedAsync();
++
++    private async System.Threading.Tasks.Task OnJoinConfirmedAsync()
+     {
+         btnJoin.interactable = false;
+         bBack.gameObject.SetActive(false);
+@@ -310,8 +423,15 @@ public class MenuLobbyUI : MonoBehaviour
+         {
+             MenuManager.Instance.MostrarClientLobby();
+ 
+-            if (txtPrecioLobbyCliente != null) txtPrecioLobbyCliente.text = $"Fee: {feeSalaActual} M";
+-            if (txtPremioLobbyCliente != null) txtPremioLobbyCliente.text = $"Prize: {premioSalaActual} M";
++            if (txtPrecioLobbyCliente != null) txtPrecioLobbyCliente.text = $"{feeSalaActual}";
++            if (txtPremioLobbyCliente != null) txtPremioLobbyCliente.text = $"{premioSalaActual}";
++
++            // MONETIZACI├ôN: Configuramos la partida para el CLIENTE
++            GameConfig.currentFee = feeSalaActual;
++            GameConfig.currentPrize = premioSalaActual;
++            GameConfig.isPrivateMatch = true;
++            GameConfig.isHostLobby = false;
++            GameConfig.prizeAwarded = false;
+ 
+             ResetearBuscador();
+         }
+@@ -322,22 +442,112 @@ public class MenuLobbyUI : MonoBehaviour
+             Debug.LogError("Error al intentar unirse definitivamente a la sala.");
+         }
+     }
+-
++    public int CalcularPremioDinamico(int conectados, int maximo)
++{
++    // 1. Obtenemos el Fee (Cuota) que configur├│ el Host
++    // Asumimos que lo tienes guardado en GameConfig o lo leemos del selector
++    string textoFee = MenuManager.Instance.privateEntryFee.opciones[MenuManager.Instance.privateEntryFee.ObtenerIndice()];
++    int entryFee = int.Parse(textoFee);
++
++    // 2. C├ílculo base: Jugadores que han pagado la entrada
++    int premioBase = conectados * entryFee;
++
++    // 3. C├ílculo de Bots: Cu├íntos huecos quedan
++    int numBots = maximo - conectados;
++    
++    // 4. Bonus por dificultad (solo si hay bots)
++    // Si la dificultad es "Alta" (├¡ndice 2), el bonus es mayor
++    int bonusDificultadIA = MenuManager.Instance.privateDifficulty.ObtenerIndice() * 25; 
++    int premioBots = numBots * bonusDificultadIA;
++
++    return premioBase + premioBots;
++}
+     // =======================================================
+     // 4. LIMPIEZA Y ABANDONO
+     // =======================================================
+-    public void AbandonarLobby()
++    public async System.Threading.Tasks.Task AbandonarLobbyAsync() 
++{
++    if (SessionNetworkManager.Instance == null) return;
++
++    try 
+     {
+-        SessionNetworkManager.Instance.AbandonarSala();
+-        MenuManager.Instance.MostrarHub();
+-        ResetearBuscador();
+-        pToolBar.SetActive(true);
+-        bBack.gameObject.SetActive(true);
++        await SessionNetworkManager.Instance.AbandonarSala();
++    }
++    catch (System.Exception e)
++    {
++        Debug.LogError($"[Red] Error cr├¡tico al abandonar sala: {e.Message}");
++    }
+ 
+-        if (txtListaNombresHost != null) txtListaNombresHost.text = "";
+-        if (txtListaNombresCliente != null) txtListaNombresCliente.text = "";
++    // --- EL ESCUDO ANTI-CRASH ---
++    // Si durante el 'await' Unity destruy├│ este men├║, abortamos la funci├│n aqu├¡ mismo.
++    if (this == null) return; 
++
++    if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
++    ResetearBuscador();
++    
++    if (pToolBar != null) pToolBar.SetActive(true);
++    
++    // Doble comprobaci├│n visual para evitar el MissingReferenceException
++    if (bBack != null && bBack.gameObject != null) bBack.gameObject.SetActive(true);
++
++    if (txtListaNombresHost != null) txtListaNombresHost.text = "";
++    if (txtListaNombresCliente != null) txtListaNombresCliente.text = "";
++}
++
++    // Corrutina principal de transici├│n: espera (m├íx 10s) a que todas las conexiones
++    // NGO est├®n listas antes de cargar la escena. Soluciona la race condition donde
++    // el timer o EvaluacionCondicionTransicion disparan LoadScene antes de que el
++    // handshake NGO de todos los clientes est├® completo ÔåÆ solo X de N jugadores jugaban.
++    private System.Collections.IEnumerator EsperarConexionesYCargar(int jugadoresEsperados)
++    {
++        float timeout = 10f;
++        Debug.Log($"[MATCHMAKING] Esperando handshake NGO de {jugadoresEsperados} jugadores (max 10s)...");
++
++        while (NetworkManager.Singleton != null
++               && NetworkManager.Singleton.ConnectedClientsList.Count < jugadoresEsperados
++               && timeout > 0)
++        {
++            timeout -= Time.deltaTime;
++            if (Time.frameCount % 60 == 0)
++                Debug.Log($"[MATCHMAKING] NGO: {NetworkManager.Singleton.ConnectedClientsList.Count}/{jugadoresEsperados} | timeout: {timeout:F1}s");
++            yield return null;
++        }
++
++        if (timeout <= 0)
++            Debug.LogWarning($"[MATCHMAKING] Timeout esperando conexiones. Arrancando con {NetworkManager.Singleton?.ConnectedClientsList.Count}/{jugadoresEsperados} jugadores.");
++        else
++            Debug.Log($"[MATCHMAKING] Handshake completo ({jugadoresEsperados} jugadores). Lanzando MainGame.");
++
++        if (NetworkManager.Singleton?.SceneManager != null)
++            NetworkManager.Singleton.SceneManager.LoadScene("MainGame", UnityEngine.SceneManagement.LoadSceneMode.Single);
++        else
++            StartCoroutine(ReintentarCargaEscena());
+     }
+ 
++    // Corrutina de reintento: si SceneManager era null, esperamos un frame y reintentamos.
++    private System.Collections.IEnumerator ReintentarCargaEscena()
++    {
++        yield return null;
++        if (NetworkManager.Singleton?.SceneManager != null)
++        {
++            Debug.Log("[MATCHMAKING] Reintentando carga de escena tras esperar un frame...");
++            NetworkManager.Singleton.SceneManager.LoadScene("MainGame", UnityEngine.SceneManagement.LoadSceneMode.Single);
++        }
++        else
++        {
++            Debug.LogError("[MATCHMAKING] SceneManager sigue siendo null. Abortando partida p├║blica.");
++            if (SessionNetworkManager.Instance != null)
++                _ = SessionNetworkManager.Instance.AbandonarSala();
++            if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
++        }
++    }
++
++public void AbandonarLobby()
++{
++    tiempoEsperaArranque = 5f; // Reset expl├¡cito para que el pr├│ximo matchmaking empiece limpio
++    _ = AbandonarLobbyAsync();
++}
++
+     public void ResetearBuscador()
+     {
+         btnSearch.gameObject.SetActive(true);
+diff --git a/Assets/Scripts/MenuManager.cs b/Assets/Scripts/MenuManager.cs
+index 139ff08..6681f57 100644
+--- a/Assets/Scripts/MenuManager.cs
++++ b/Assets/Scripts/MenuManager.cs
+@@ -1,5 +1,6 @@
+ using UnityEngine;
+ using TMPro; 
++using UnityEngine.UI;
+ 
+ public class MenuManager : MonoBehaviour
+ {
+@@ -8,6 +9,7 @@ public class MenuManager : MonoBehaviour
+     [Header("1. HUB Central")]
+     public GameObject panelHub;
+     public GameObject pToolBar;
++    public Button bBack; //
+     
+     [Header("2. Perfil & Stats")]
+     public GameObject panelProfile;
+@@ -24,6 +26,7 @@ public class MenuManager : MonoBehaviour
+ 
+     [Header("4B. Modo P├║blico (Matchmaking)")]
+     public GameObject panelMatchmakingLobby;
++    public Button bLeave;
+ 
+     [Header("4C. Modo Privado (Private)")]
+     public GameObject panelPrivateChoice;  
+@@ -38,6 +41,8 @@ public class MenuManager : MonoBehaviour
+     public OptionController privateEntryFee;
+     public TMP_Text textoPrecioPrivada; 
+ 
++    private MenuLobbyUI _cachedMenuLobbyUI;
++
+     private void Awake()
+     {
+         if (Instance == null) Instance = this;
+@@ -59,19 +64,20 @@ public class MenuManager : MonoBehaviour
+         ApagarTodosLosPaneles(); 
+         if(panelHub != null) panelHub.SetActive(true); 
+         pToolBar.SetActive(true);
++        bBack.gameObject.SetActive(true);
+         
+         // Disparamos la limpieza global de la UI Privada
+-        MenuLobbyUI menuLobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
+-        if (menuLobbyUI != null)
++        if (_cachedMenuLobbyUI == null) _cachedMenuLobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
++        if (_cachedMenuLobbyUI != null)
+         {
+-            menuLobbyUI.ResetearLobbyCompleto();
++            _cachedMenuLobbyUI.ResetearLobbyCompleto();
+         }
+     }
+     public void MostrarPerfil() { ApagarTodosLosPaneles(); if(panelProfile != null) panelProfile.SetActive(true); }
+     public void MostrarTienda() { ApagarTodosLosPaneles(); if(panelShop != null) panelShop.SetActive(true); }
+ 
+     public void IniciarFlujoPractica() { ApagarTodosLosPaneles(); if(panelPractice != null) panelPractice.SetActive(true); }
+-    public void IniciarFlujoPublico() { ApagarTodosLosPaneles(); if(panelMatchmakingLobby != null) panelMatchmakingLobby.SetActive(true); }
++    public void IniciarFlujoPublico() { ApagarTodosLosPaneles(); if(panelMatchmakingLobby != null) panelMatchmakingLobby.SetActive(true); bBack.gameObject.SetActive(false); }
+     
+     // Al pulsar "Private" en el Hub, venimos aqu├¡:
+     public void IniciarFlujoPrivado() { ApagarTodosLosPaneles(); if(panelPrivateChoice != null) panelPrivateChoice.SetActive(true); }
+@@ -152,7 +158,7 @@ public class MenuManager : MonoBehaviour
+     // =======================================================
+     public async void IntentarMatchmaking()
+     {
+-        int feeMatchmaking = 500; // El coste fijo por entrar a partidas p├║blicas
++        int feeMatchmaking = 200; // El coste fijo por entrar a partidas p├║blicas
+ 
+         if (TopBarUI.Instance != null && !TopBarUI.Instance.TieneSuficientes(feeMatchmaking))
+         {
+@@ -166,14 +172,15 @@ public class MenuManager : MonoBehaviour
+         IniciarFlujoPublico();
+         
+         
+-        MenuLobbyUI lobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
+-        if (lobbyUI != null && lobbyUI.txtJugadoresMatchmaking != null)
++        
++        if (_cachedMenuLobbyUI == null) _cachedMenuLobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
++        if (_cachedMenuLobbyUI != null && _cachedMenuLobbyUI.txtJugadoresMatchmaking != null)
+         {
+-            lobbyUI.txtJugadoresMatchmaking.text = "Buscando...";
+-            if (lobbyUI.txtListaNombresMatchmaking != null) lobbyUI.txtListaNombresMatchmaking.text = "";
++            _cachedMenuLobbyUI.txtJugadoresMatchmaking.text = "Buscando...";
++            if (_cachedMenuLobbyUI.txtListaNombresMatchmaking != null) _cachedMenuLobbyUI.txtListaNombresMatchmaking.text = "";
+         }
+ 
+-        GameConfig.nPlayers = 4; 
++        //GameConfig.nPlayers = 4; 
+         GameConfig.difficulty = 0; 
+ 
+         if (SessionNetworkManager.Instance != null)
+diff --git a/Assets/Scripts/NetworkBootstrap.cs b/Assets/Scripts/NetworkBootstrap.cs
+index 2e64a35..41f77fc 100644
+--- a/Assets/Scripts/NetworkBootstrap.cs
++++ b/Assets/Scripts/NetworkBootstrap.cs
+@@ -1,111 +1,4 @@
+-using UnityEngine;
+-using Unity.Netcode;
+-using Unity.Services.Core;
+-using Unity.Services.Authentication;
+-using Unity.Services.Relay;
+-using Unity.Services.Relay.Models;
+-using Unity.Netcode.Transports.UTP;
+-using Unity.Networking.Transport.Relay;
+-using System.Threading.Tasks;
+-
+-public class NetworkBootstrap : MonoBehaviour
+-{
+-    private string joinCodeInput = "";
+-    private string myJoinCode = "";
+-
+-    private async void Start()
+-    {
+-        // PASO 0: Hacemos que este objeto (y el NetworkManager) sobrevivan al cambiar de escena
+-        DontDestroyOnLoad(gameObject);
+-
+-        // Iniciamos los servicios de Unity en la nube
+-        await UnityServices.InitializeAsync();
+-        
+-        // Nos logueamos de forma an├│nima 
+-        if (!AuthenticationService.Instance.IsSignedIn)
+-        {
+-            await AuthenticationService.Instance.SignInAnonymouslyAsync();
+-            Debug.Log($"Conectado a Unity Cloud con ID: {AuthenticationService.Instance.PlayerId}");
+-        }
+-    }
+-
+-    private void OnGUI()
+-    {
+-        GUILayout.BeginArea(new Rect(10, 10, 300, 300));
+-        
+-        if (!NetworkManager.Singleton.IsClient && !NetworkManager.Singleton.IsServer)
+-        {
+-            // BOT├ôN HOST
+-            if (GUILayout.Button("Crear Partida (Host)"))
+-            {
+-                CrearPartidaRelay();
+-            }
+-
+-            GUILayout.Space(20);
+-
+-            // CAMPO DE TEXTO Y BOT├ôN CLIENTE
+-            joinCodeInput = GUILayout.TextField(joinCodeInput, 10);
+-            if (GUILayout.Button("Unirse con C├│digo"))
+-            {
+-                UnirsePartidaRelay(joinCodeInput);
+-            }
+-        }
+-        else
+-        {
+-            GUILayout.Label("Modo: " + (NetworkManager.Singleton.IsHost ? "Host" : "Cliente"));
+-            if (NetworkManager.Singleton.IsHost && !string.IsNullOrEmpty(myJoinCode))
+-            {
+-                GUILayout.Label($"TU C├ôDIGO DE INVITACI├ôN: {myJoinCode}");
+-            }
+-        }
+-        GUILayout.EndArea();
+-    }
+-
+-    // --- L├ôGICA DEL HOST ---
+-    private async void CrearPartidaRelay()
+-    {
+-        try
+-        {
+-            // Pedimos espacio para 5 clientes (6 jugadores en total)
+-            Allocation allocation = await RelayService.Instance.CreateAllocationAsync(5);
+-            
+-            // Pedimos el c├│digo corto para compartir
+-            myJoinCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
+-            Debug.Log($"┬íPartida creada! C├│digo: {myJoinCode}");
+-
+-            // Configuramos el transporte de Netcode para usar este Relay
+-            RelayServerData relayServerData = AllocationUtils.ToRelayServerData(allocation, "dtls");
+-            NetworkManager.Singleton.GetComponent<UnityTransport>().SetRelayServerData(relayServerData);
+-
+-            // Arrancamos el Host
+-            NetworkManager.Singleton.StartHost();
+-        }
+-        catch (RelayServiceException e)
+-        {
+-            Debug.LogError($"Error al crear la partida Relay: {e}");
+-        }
+-    }
+-
+-    // --- L├ôGICA DEL CLIENTE ---
+-    private async void UnirsePartidaRelay(string joinCode)
+-    {
+-        try
+-        {
+-            Debug.Log($"Intentando unirse con c├│digo: {joinCode}");
+-            
+-            // Pedimos a Unity que nos deje entrar con ese c├│digo
+-            JoinAllocation joinAllocation = await RelayService.Instance.JoinAllocationAsync(joinCode);
+-
+-            // Configuramos el transporte con los datos recibidos
+-            RelayServerData relayServerData = AllocationUtils.ToRelayServerData(joinAllocation, "dtls");
+-            NetworkManager.Singleton.GetComponent<UnityTransport>().SetRelayServerData(relayServerData);
+-
+-            // Arrancamos el Cliente
+-            NetworkManager.Singleton.StartClient();
+-        }
+-        catch (RelayServiceException e)
+-        {
+-            Debug.LogError($"Error al unirse a la partida Relay: {e}");
+-        }
+-    }
+-}
+\ No newline at end of file
++// ARCHIVO VACIADO - C├ôDIGO MUERTO (Chocaba con SessionNetworkManager)
++// 
++// Este script inicializaba UGS en paralelo y causaba condiciones de carrera.
++// Ya no es necesario.
+\ No newline at end of file
+diff --git a/Assets/Scripts/PauseManager.cs b/Assets/Scripts/PauseManager.cs
+index 3aa08b2..5888840 100644
+--- a/Assets/Scripts/PauseManager.cs
++++ b/Assets/Scripts/PauseManager.cs
+@@ -64,14 +64,14 @@ public class PauseManager : NetworkBehaviour
+     }
+ 
+     //  RECIBE EL PUESTO NUM├ëRICO 
+-    public void TriggerGameOver(int puesto)
++   public void TriggerGameOver(int puesto)
+     {
+         isGameOver = true;
+ 
+         if (titleText != null)
+             titleText.text = "GAMEOVER";
+ 
+-        // 1. Contamos cu├íntos vivos quedan en toda la mesa
++        // 1. Contamos cu├íntos vivos quedan en toda la mesa (Humanos + Bots)
+         int jugadoresVivos = 0;
+         if (InteractionManager.Instance != null)
+         {
+@@ -81,20 +81,35 @@ public class PauseManager : NetworkBehaviour
+             }
+         }
+ 
+-        // 2. Cambio de botones para el modo Game Over
++        // 2. Contamos ESPEC├ìFICAMENTE cu├íntos HUMANOS quedan vivos
++        int otrosHumanosVivos = 0;
++        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
++        {
++            foreach (ulong clientId in NetworkManager.Singleton.ConnectedClientsIds)
++            {
++                int id = (int)clientId;
++                // Si el cliente no soy yo, y adem├ís tiene vidas > 0, es un humano vivo
++                if (id != (int)NetworkManager.Singleton.LocalClientId && InteractionManager.Instance.vidas[id] > 0)
++                {
++                    otrosHumanosVivos++;
++                }
++            }
++        }
++
++        // 3. Cambio de botones para el modo Game Over
+         if (resumeButton != null) resumeButton.SetActive(false);
+ 
+-        // Activamos "Espectar" si quedan al menos 2 personas para jugar.
++        // NUEVA REGLA: Solo se puede espectar si queda OTRO HUMANO REAL jugando
+         if (spectateButton != null)
+         {
+-            bool sePuedeEspectar = (jugadoresVivos > 1);
++            bool sePuedeEspectar = (otrosHumanosVivos > 0);
+             spectateButton.SetActive(sePuedeEspectar);
+         }
+ 
++        // 4. Mostrar Estad├¡sticas
+         if (statsText != null)
+         {
+             statsText.gameObject.SetActive(true);
+-
+             var im = InteractionManager.Instance;
+             int rondas = im.rondasJugadasTotales;
+ 
+@@ -107,27 +122,36 @@ public class PauseManager : NetworkBehaviour
+             statsText.alignment = TextAlignmentOptions.Center;
+         }
+ 
+-        // Encendemos el panel visual directamente sin usar el m├®todo antiguo
+-        pausePanel.SetActive(true); // O el nombre que tenga tu panel principal
+-
+-        
+-        int otrosHumanosVivos = 0;
+-        foreach (ulong clientId in NetworkManager.Singleton.ConnectedClientsIds)
++        // MONETIZACI├ôN: Reparto de premios al finalizar
++        if (!GameConfig.prizeAwarded && GameConfig.currentFee > 0)
+         {
+-            int id = (int)clientId;
+-            if (id != (int)NetworkManager.Singleton.LocalClientId && InteractionManager.Instance.vidas[id] > 0)
++            if (puesto == 1) // Ganador absoluto
+             {
+-                otrosHumanosVivos++;
++                TopBarUI.Instance.ActualizarMonedas(GameConfig.currentPrize);
++                Debug.Log($"[ECONOM├ìA] ┬íHas ganado! Recibes {GameConfig.currentPrize} monedas.");
+             }
++            
++            // Bono por hostear partida p├║blica hasta el final
++            if (!GameConfig.isPrivateMatch && GameConfig.isHostLobby)
++            {
++                TopBarUI.Instance.ActualizarMonedas(50);
++                Debug.Log("[ECONOM├ìA] Bono de 50 monedas por mantener el servidor p├║blico vivo.");
++            }
++            
++            GameConfig.prizeAwarded = true;
+         }
+ 
++        // Encendemos el panel visual
++        pausePanel.SetActive(true); 
++
++        // 5. Congelamos el tiempo SOLO si ya no quedan humanos
+         if (otrosHumanosVivos == 0)
+         {
+-            Time.timeScale = 0f; // Congelo porque ya nadie real est├í jugando
++            Time.timeScale = 0f; // Congelo porque ya nadie real est├í jugando (solo bots)
+         }
+         else
+         {
+-            Time.timeScale = 1f; // NO congelo
++            Time.timeScale = 1f; // NO congelo para que puedas espectar la partida del otro
+         }
+     }
+ 
+@@ -154,20 +178,42 @@ public class PauseManager : NetworkBehaviour
+         if (TableZone.Instance != null) TableZone.Instance.ResetStats();
+     }
+ 
+-    public void QuitGame()
++    // 1. A├▒adimos 'async' a la declaraci├│n
++// 1. A├▒adimos 'async' aqu├¡
++// En PauseManager.cs
++public async void QuitGame() 
++{ 
++    Time.timeScale = 1f;
++
++    // MONETIZACI├ôN: Penalizaci├│n por abandono voluntario del Host en Privadas
++    if (!GameConfig.prizeAwarded && GameConfig.currentFee > 0)
+     {
+-        Time.timeScale = 1f;
+-        if (NetworkManager.Singleton != null)
++        if (GameConfig.isPrivateMatch && GameConfig.isHostLobby)
+         {
+-            // Al llamar a Shutdown, Netcode corta los cables.
+-            // Los clientes recibir├ín el evento 'OnClientDisconnectCallback' inmediatamente.
+-            NetworkManager.Singleton.Shutdown();
++            // El Host de una privada huye: pierde la fianza de los dem├ís (├®l ya pag├│ la suya)
++            int penalty = GameConfig.currentFee * (GameConfig.nHumanPlayers - 1);
++            if (penalty > 0)
++            {
++                TopBarUI.Instance.GastarMonedas(penalty);
++                Debug.Log($"[ECONOM├ìA] Penalizaci├│n por abandonar hosteando: -{penalty} monedas.");
++            }
+         }
++        GameConfig.prizeAwarded = true; // Sellamos para que no pase nada m├ís
++    }
+ 
+-        // 2. Volvemos al men├║
+-        SceneManager.LoadScene("MainMenu");
++    // Si el gestor de red existe, cerramos la sesi├│n de UGS y apagamos Netcode
++    if (SessionNetworkManager.Instance != null)
++    {
++        // false porque aqu├¡ la conexi├│n S├ì est├í viva y queremos avisar educadamente a UGS
++        await SessionNetworkManager.Instance.AbandonarSala(false);
++        
++        // Esperamos a que los sockets se liberen antes de cambiar de escena
++        await System.Threading.Tasks.Task.Delay(500);
+     }
+ 
++    UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
++}
++
+     private void SetPauseState(bool isPaused)
+     {
+         if (pausePanel != null) pausePanel.SetActive(isPaused);
+diff --git a/Assets/Scripts/SessionNetworkManager.cs b/Assets/Scripts/SessionNetworkManager.cs
+index 1544257..1feea64 100644
+--- a/Assets/Scripts/SessionNetworkManager.cs
++++ b/Assets/Scripts/SessionNetworkManager.cs
+@@ -3,16 +3,23 @@ using Unity.Netcode;
+ using Unity.Services.Core;
+ using Unity.Services.Authentication;
+ using Unity.Services.Multiplayer;
++using System.Threading;
+ using System.Threading.Tasks;
+ using System.Collections.Generic;
+ using Unity.Services.CloudCode;
+ using Unity.Services.CloudSave;
++using UnityEngine.UI;
+ 
+ public class SessionNetworkManager : MonoBehaviour
+ {
+     public static SessionNetworkManager Instance;
+ 
+     public ISession currentSession;
++    private CancellationTokenSource matchmakingCts;
++    public Button bLeave;
++
++    // Guard anti-reentrada: evita que OnSessionDeleted y OnHostChanged se ejecuten a la vez
++    private bool _expulsandoAlHub = false;
+ 
+     private async void Awake()
+     {
+@@ -25,8 +32,9 @@ public class SessionNetworkManager : MonoBehaviour
+             {
+                 Debug.Log("[1/3] Inicializando UGS...");
+                 InitializationOptions options = new InitializationOptions();
++#if UNITY_EDITOR
+                 options.SetProfile("Jugador_" + System.Guid.NewGuid().ToString().Substring(0, 6));
+-
++#endif
+                 await UnityServices.InitializeAsync(options);
+                 Debug.Log("[2/3] UGS Inicializado correctamente.");
+             }
+@@ -35,43 +43,51 @@ public class SessionNetworkManager : MonoBehaviour
+             {
+                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
+                 Debug.Log($"[3/3] Autenticado en la nube. PlayerID: {AuthenticationService.Instance.PlayerId}");
++
++                if (TopBarUI.Instance != null) await TopBarUI.Instance.CargarEconomiaNube();
++                await SincronizarNoAds();
+             }
+         }
+         catch (System.Exception e) { Debug.LogError($"Error grave al arrancar UGS: {e.Message}"); }
+     }
+ 
+     // =========================================================================
+-    // 1. HOST: CREAR LA SALA PRIVADA Y PUBLICARLA EN CLOUD SAVE
++    // 1. HOST: CREAR LA SALA PRIVADA
+     // =========================================================================
+     public async Task<string> CrearSalaPrivada(int maxPlayers, int entryFee, int prizeTotal, int difficulty, int turnTime)
+     {
++        if (currentSession != null)
++        {
++            Debug.LogWarning("ÔÜá´©Å Se ha detectado una sesi├│n previa sin cerrar. Destruy├®ndola antes de crear una nueva...");
++            await AbandonarSala();
++            await Task.Delay(500);
++        }
++
+         try
+         {
+             var sessionOptions = new SessionOptions
+             {
+                 MaxPlayers = maxPlayers,
+                 IsPrivate = true
+-            };
+-            sessionOptions.WithNetworkOptions(new NetworkOptions());
++            }.WithRelayNetwork();
+ 
+             string roomName = System.Guid.NewGuid().ToString();
+             currentSession = await MultiplayerService.Instance.CreateOrJoinSessionAsync(roomName, sessionOptions);
+ 
+             string codigoGenerado = currentSession.Code;
++
++            // CORRECCI├ôN Bug 9: el host tambi├®n necesita saber si su sesi├│n muere
++            currentSession.Deleted += OnSessionDeleted;
++            currentSession.SessionHostChanged += OnHostChanged;
++
+             if (currentSession.IsHost)
+             {
+                 string jsonPayload = $"{{\"joinCode\":\"{codigoGenerado}\", \"price\":{entryFee}, \"prize\":{prizeTotal}}}";
+-
+-                var argumentos = new Dictionary<string, object>
+-                {
+-                    { "payload", jsonPayload }
+-                };
++                var argumentos = new Dictionary<string, object> { { "payload", jsonPayload } };
+ 
+                 try
+                 {
+-                    Debug.Log($"[CLOUD] Enviando paquete Trojan Horse para la sala: {codigoGenerado}");
+                     await CloudCodeService.Instance.CallEndpointAsync("PublishLobbyPreview", argumentos);
+-                    Debug.Log($"[CLOUD] ┬í├ëxito! Script JS ejecutado y barrera superada.");
+                 }
+                 catch (System.Exception ex)
+                 {
+@@ -96,7 +112,6 @@ public class SessionNetworkManager : MonoBehaviour
+     // =========================================================================
+     // 2. CLIENTE (SEARCH): PREVISUALIZAR SIN ENSUCIAR EL LOBBY
+     // =========================================================================
+-
+     [System.Serializable]
+     public class LobbyMetadata { public int entryPrice; public int totalPrize; public long creationTimestamp; }
+ 
+@@ -105,18 +120,13 @@ public class SessionNetworkManager : MonoBehaviour
+         try
+         {
+             string cleanCode = joinCode.Trim().ToUpper();
+-            Debug.Log($"[CLOUD] Buscando sala: '{cleanCode}'");
+-
+             var queryResult = await CloudSaveService.Instance.Data.Custom.LoadAllAsync(cleanCode);
+ 
+             if (queryResult.TryGetValue("lobby_metadata", out var metaItem))
+             {
+                 var settings = metaItem.Value.GetAs<LobbyMetadata>();
+-                Debug.Log($"[CLOUD] ┬í├ëxito! Precio: {settings.entryPrice}, Premio: {settings.totalPrize}");
+                 return (settings.entryPrice, settings.totalPrize);
+             }
+-
+-            Debug.LogWarning($"[CLOUD] La sala no tiene metadatos.");
+             return (-1, -1);
+         }
+         catch (System.Exception e) { Debug.LogError($"Error leyendo nube: {e.Message}"); return (-1, -1); }
+@@ -129,7 +139,6 @@ public class SessionNetworkManager : MonoBehaviour
+     {
+         try
+         {
+-            Debug.Log($"[JOIN] Iniciando uni├│n definitiva a la sesi├│n: {joinCode}");
+             var joinOptions = new JoinSessionOptions();
+             joinOptions.WithNetworkOptions(new NetworkOptions());
+ 
+@@ -142,10 +151,8 @@ public class SessionNetworkManager : MonoBehaviour
+ 
+                 if (!NetworkManager.Singleton.IsClient && !NetworkManager.Singleton.IsServer)
+                 {
+-                    Debug.Log("[JOIN] Confirmado: Arrancando el motor NGO en modo Cliente...");
+                     NetworkManager.Singleton.StartClient();
+                 }
+-                
+                 return true;
+             }
+             return false;
+@@ -158,86 +165,252 @@ public class SessionNetworkManager : MonoBehaviour
+     }
+ 
+     // =========================================================================
+-    // 5. MATCHMAKING P├ÜBLICO (BUSCA O CREA 100% AUTOMATIZADO UNITY 6.2)
++    // 5. MATCHMAKING P├ÜBLICO (BLINDADO CONTRA ERROR 404)
+     // =========================================================================
+     public async Task IniciarMatchmakingPublico(int feeFijo)
+     {
+         int premioTotal = feeFijo * 4;
+ 
+-        try
++        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+         {
+-            Debug.Log("[MATCHMAKING] Iniciando emparejamiento automatizado...");
++            Debug.Log("[RED] Limpiando puerto de red zombi antes de buscar...");
++            NetworkManager.Singleton.Shutdown();
++            await Task.Delay(500); 
++        }
+ 
+-            var quickJoinOptions = new QuickJoinOptions
+-            {
+-                Filters = new List<FilterOption>
+-                {
+-                    new FilterOption(FilterField.AvailableSlots, "1", FilterOperation.GreaterOrEqual)
+-                },
+-                Timeout = System.TimeSpan.FromSeconds(10),
+-                CreateSession = true 
+-            };
++        matchmakingCts?.Cancel();
++        matchmakingCts = new CancellationTokenSource(System.TimeSpan.FromSeconds(60));
++
++        MenuLobbyUI lobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
++
++        try
++        {
++            Debug.Log("[MATCHMAKING] Iniciando emparejamiento por Tickets en la nube...");
++            
++            if (lobbyUI != null && lobbyUI.btnLeaveMatchmaking != null)
++                lobbyUI.btnLeaveMatchmaking.gameObject.SetActive(true);
+ 
+-          
++            var matchmakerOptions = new MatchmakerOptions { QueueName = "PublicQueue" };
+             var sessionOptions = new SessionOptions
+             {
+                 MaxPlayers = 4,
+                 IsPrivate = false
+             }.WithRelayNetwork(); 
+ 
+-            // Ejecutamos la llamada unificada
+-            currentSession = await MultiplayerService.Instance.MatchmakeSessionAsync(quickJoinOptions, sessionOptions);
++            // EJECUCI├ôN
++            Debug.Log(">>> [TRAZA 1] Bot├│n pulsado. Voy a pedirle el Matchmaking a la nube...");
++            currentSession = await MultiplayerService.Instance.MatchmakeSessionAsync(
++                matchmakerOptions, 
++                sessionOptions, 
++                matchmakingCts.Token
++            );
++            Debug.Log(">>> [TRAZA 2] La nube ha respondido y currentSession existe.");
++
++            if (lobbyUI != null && lobbyUI.btnLeaveMatchmaking != null)
++                lobbyUI.btnLeaveMatchmaking.gameObject.SetActive(false);
+ 
+             currentSession.Deleted += OnSessionDeleted;
+             currentSession.SessionHostChanged += OnHostChanged;
+ 
+             if (currentSession.IsHost)
+             {
+-                Debug.Log("[MATCHMAKING] Eres Host. Red levantada autom├íticamente por el SDK.");
+-                
+                 string jsonPayload = $"{{\"joinCode\":\"{currentSession.Code}\", \"price\":{feeFijo}, \"prize\":{premioTotal}}}";
+                 var argumentos = new Dictionary<string, object> { { "payload", jsonPayload } };
+-                try { await CloudCodeService.Instance.CallEndpointAsync("PublishLobbyPreview", argumentos); } catch { }
++                try { await CloudCodeService.Instance.CallEndpointAsync("PublishLobbyPreview", argumentos); } catch(System.Exception e) {Debug.LogError($">>> [TRAZA FATAL] El c├│digo ha petado aqu├¡. Motivo: {e.Message}"); }
++            }
++            
++            // MONETIZACI├ôN: Configuramos la partida (P├║blica)
++            GameConfig.currentFee = feeFijo;
++            GameConfig.currentPrize = premioTotal;
++            GameConfig.isPrivateMatch = false;
++            GameConfig.isHostLobby = currentSession.IsHost;
++            GameConfig.prizeAwarded = false;
++
++            Debug.Log(">>> [TRAZA 3] Rol asignado. Voy a llamar a MenuManager.IniciarFlujoPublico()...");
++            MenuManager.Instance.IniciarFlujoPublico();
++            
++        }
++        // --- CIRUG├ìA 1: ATRAPAR EL TICKET HU├ëRFANO 404 ---
++        
++        catch (Unity.Services.Core.RequestFailedException e)
++        {
++            if (e.Message.Contains("404") || e.Message.Contains("EntityNotFound"))
++            {
++                Debug.LogWarning("[MATCHMAKING RED] UGS devolvi├│ un Ticket Hu├®rfano (404). Purgando estado...");
++                currentSession = null;
++                if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
+             }
+             else
+             {
+-                Debug.Log("[MATCHMAKING] Eres Cliente. Conexi├│n de red gestionada por el SDK.");
++                Debug.LogError($"[MATCHMAKING-ERROR] Fallo cr├¡tico Multiplayer: {e.Message}");
++                await AbandonarSala(true);
++                if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
+             }
+-
+-            // Mostramos la interfaz (El cliente ya se est├í conectando por detr├ís)
+-            MenuManager.Instance.IniciarFlujoPublico();
++        }
++        catch (System.OperationCanceledException)
++        {
++            Debug.LogWarning("[MATCHMAKING] B├║squeda cancelada por el usuario o tiempo agotado.");
++            if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
+         }
+         catch (SessionException e)
+         {
+-            Debug.LogError($"[MATCHMAKING-ERROR] Error cr├¡tico: {e.Message}");
++            // El error "Error while fetching Matchmaking Results" con 404/EntityNotFound
++            // es un TICKET HU├ëRFANO: UGS ten├¡a un ticket de una sesi├│n anterior y el
++            // servidor Relay ya expir├│. Se soluciona purgando el estado y reintentando.
++            bool esTicketHuerfano = e.Message.Contains("404")
++                                 || e.Message.Contains("EntityNotFound")
++                                 || e.Message.Contains("fetching Matchmaking Results")
++                                 || e.Message.Contains("fetching matchmaking");
++
++            if (esTicketHuerfano)
++            {
++                Debug.LogWarning("[MATCHMAKING] Ticket hu├®rfano detectado (SessionException 404). Purgando y reintentando en 2s...");
++
++                // Limpieza de estado sin tocar red (la sesi├│n ya est├í muerta en UGS)
++                currentSession = null;
++                if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
++                    NetworkManager.Singleton.Shutdown();
++
++                // Esperamos a que los sockets se liberen y reintentamos autom├íticamente
++                await Task.Delay(2000);
++
++                // Comprobamos que el jugador sigue en el men├║ (no cancel├│ mientras esper├íbamos)
++                if (MenuManager.Instance != null && matchmakingCts != null && !matchmakingCts.IsCancellationRequested)
++                {
++                    Debug.Log("[MATCHMAKING] Reintentando matchmaking autom├íticamente...");
++                    await IniciarMatchmakingPublico(feeFijo);   // Reintento ├║nico
++                }
++                else
++                {
++                    if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
++                }
++            }
++            else
++            {
++                // Error real de sesi├│n ÔÇö no reintentamos
++                Debug.LogError($"[MATCHMAKING-ERROR] Fallo cr├¡tico Session: {e.Message}");
++                await AbandonarSala(true);
++                if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
++            }
+         }
+     }
+ 
+-    // --- EVENTOS DE SEGURIDAD ---
++    private async Task SincronizarNoAds()
++    {
++        var query = await CloudSaveService.Instance.Data.Player.LoadAsync(new HashSet<string> { "NoAdsOwned" });
++        if (query.TryGetValue("NoAdsOwned", out var item))
++        {
++            bool tieneNoAds = item.Value.GetAs<bool>();
++            PlayerPrefs.SetInt("NoAds", tieneNoAds ? 1 : 0);
++            PlayerPrefs.Save();
++        }
++    }
+ 
++    // --- EVENTOS DE SEGURIDAD ---
+     private void OnSessionDeleted()
+     {
+-        Debug.LogWarning("[SEGURIDAD] La sesi├│n ha sido destruida por el Host. Saliendo...");
+-        ExpulsarAlHubPorCaidaHost();
++        // Disparamos la Task de forma segura desde un evento s├¡ncrono
++        _ = ExpulsarAlHubPorCaidaHostAsync();
+     }
+ 
+     private void OnHostChanged(string newHostId)
+     {
+-        Debug.LogWarning("[SEGURIDAD] El Host original se ha desconectado en la fase de espera. Saliendo...");
+-        ExpulsarAlHubPorCaidaHost();
++        _ = ExpulsarAlHubPorCaidaHostAsync();
+     }
+ 
+-    private void ExpulsarAlHubPorCaidaHost()
++    // CORRECCI├ôN Bug 8: async Task en lugar de async void para que las excepciones
++    // sean capturables y el guard _expulsandoAlHub funcione como barrera.
++    public async Task ExpulsarAlHubPorCaidaHostAsync()
+     {
+-        if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
+-        AbandonarSala();
++        // Si ya estamos ejecutando esta rutina, ignoramos la llamada duplicada
++        if (_expulsandoAlHub) return;
++        _expulsandoAlHub = true;
++
++        try
++        {
++            Time.timeScale = 1f;
++
++            // MONETIZACI├ôN: Reembolsos por culpa del Host
++            // Si esto se llama, significa que el Servidor se ha ido y somos un cliente (o fuimos expulsados).
++            // Si el fee ya fue deducido (la partida arranc├│) y no se dio premio a├║n:
++            if (GameConfig.currentFee > 0 && !GameConfig.prizeAwarded)
++            {
++                if (GameConfig.isPrivateMatch)
++                {
++                    // Privada: Devolvemos fee y repartimos la penalizaci├│n del host + el fee de los que huyeron
++                    // entre los clientes que siguen vivos.
++                    int clientesVivos = 1; // M├¡nimo 1 (t├║ mismo)
++                    
++                    if (InteractionManager.Instance != null && InteractionManager.Instance.vidas != null)
++                    {
++                        clientesVivos = 0;
++                        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
++                        {
++                            ulong cid = InteractionManager.Instance.GetClientIdForSeat(i);
++                            // Si es humano (tiene cid), NO es el Host (cid != 0), y sigue vivo
++                            if (cid != ulong.MaxValue && cid != 0 && InteractionManager.Instance.vidas[i] > 0)
++                            {
++                                clientesVivos++;
++                            }
++                        }
++                        if (clientesVivos < 1) clientesVivos = 1; // Failsafe
++                    }
++
++                    // Pool = Penalizaci├│n del Host + Fee de todos los clientes
++                    // Penalizaci├│n del Host = Fee * (nHumanPlayers - 1)
++                    // Fee total aportado por clientes = Fee * (nHumanPlayers - 1)
++                    // Total Pool = 2 * Fee * (nHumanPlayers - 1)
++                    int poolTotal = 2 * GameConfig.currentFee * (GameConfig.nHumanPlayers - 1);
++                    
++                    // Repartir equitativamente entre los vivos (el fee original + su parte del bot├¡n)
++                    int recompensa = poolTotal / clientesVivos;
++                    
++                    TopBarUI.Instance.ActualizarMonedas(recompensa);
++                }
++                else
++                {
++                    // P├║blica: Devolvemos fee ├¡ntegro (fue culpa del matchmaking/host random)
++                    TopBarUI.Instance.ActualizarMonedas(GameConfig.currentFee);
++                }
++                GameConfig.prizeAwarded = true; // Para no devolver dos veces
++            }
++
++            await AbandonarSala(true);
++            await Task.Delay(500);
++
++            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != "MainMenu")
++            {
++                UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
++            }
++            else
++            {
++                if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
++            }
++        }
++        catch (System.Exception e)
++        {
++            Debug.LogError($"[RED] Error al expulsar al hub: {e.Message}");
++        }
++        finally
++        {
++            // Siempre liberamos el guard, aunque haya fallado
++            _expulsandoAlHub = false;
++        }
+     }
+ 
++    // Alias p├║blico por compatibilidad con cualquier llamada directa existente
++    public void ExpulsarAlHubPorCaidaHost() => _ = ExpulsarAlHubPorCaidaHostAsync();
++   
+     // =========================================================================
+-    // 4. ABANDONAR / CANCELAR SALA
++    // 4. ABANDONAR / CANCELAR SALA (BLINDADO CONTRA WARNINGS)
+     // =========================================================================
+-    public async void AbandonarSala()
++   public async Task AbandonarSala(bool sesionYaDestruidaExternamente = false)
+     {
++        matchmakingCts?.Cancel();
++        
++        // Chivato para saber si UGS ya se encarg├│ de apagar Netcode
++        bool redApagadaPorUGS = false; 
++
+         if (currentSession != null)
+         {
+             currentSession.Deleted -= OnSessionDeleted;
+@@ -245,42 +418,45 @@ public class SessionNetworkManager : MonoBehaviour
+ 
+             try
+             {
+-                if (currentSession.IsHost)
++                if (!sesionYaDestruidaExternamente)
+                 {
+-                    try
++                    if (currentSession.IsHost)
+                     {
+-                        // await CloudSaveService.Instance.Data.Custom.DeleteAsync(currentSession.Code);
++                        // ESTO apaga el NetworkManager autom├íticamente por dentro
++                        await currentSession.AsHost().DeleteAsync(); 
+                     }
+-                    catch
++                    else
+                     {
+-                        Debug.Log("Nota: CloudSave no pudo borrar la clave antigua.");
++                        // ESTO apaga el NetworkManager autom├íticamente por dentro
++                        await currentSession.LeaveAsync(); 
+                     }
+-
+-                    await currentSession.AsHost().DeleteAsync();
+-                }
+-                else
+-                {
+-                    await currentSession.LeaveAsync();
++                    
++                    // Si llegamos aqu├¡ sin errores, UGS ya ha apagado la red
++                    redApagadaPorUGS = true; 
+                 }
+             }
+-            catch (System.Exception e) { Debug.LogError($"Error al salir: {e.Message}"); }
++            catch (System.Exception e) { Debug.Log($"[RED] Limpieza local completada: {e.Message}"); }
+ 
+             currentSession = null;
+         }
+ 
+-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
++        // --- MODO FAIL-SAFE ---
++        // SOLO apagamos a mano si no hab├¡a sesi├│n en la nube o si UGS fall├│
++        if (!redApagadaPorUGS && NetworkManager.Singleton != null)
+         {
+-            NetworkManager.Singleton.Shutdown();
++            if (NetworkManager.Singleton.IsListening)
++            {
++                NetworkManager.Singleton.Shutdown();
++            }
+         }
+     }
+ 
+-    private void OnTransportCrash()
+-    {
+-        Debug.LogError("­ƒÜ¿ [CHIVATO] ┬íEL TRANSPORTE DE UNITY HA CHOCADO! El puerto UDP ya est├í en uso.");
+-    }
+-
+     private void OnDestroy()
+     {
+-        AbandonarSala();
++        matchmakingCts?.Cancel();
++        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
++        {
++            NetworkManager.Singleton.Shutdown();
++        }
+     }
+ }
+\ No newline at end of file
+diff --git a/Assets/Scripts/ShopController.cs b/Assets/Scripts/ShopController.cs
+index 3319b89..b7e2a34 100644
+--- a/Assets/Scripts/ShopController.cs
++++ b/Assets/Scripts/ShopController.cs
+@@ -1,6 +1,7 @@
+ #pragma warning disable 0618
+ using UnityEngine;
+ using UnityEngine.Purchasing;
++using System.Collections.Generic;
+ 
+ public class ShopController : MonoBehaviour, IStoreListener
+ {
+@@ -115,12 +116,24 @@ public class ShopController : MonoBehaviour, IStoreListener
+         }
+     }
+     
+-    private void ActivarNoAds()
++    private async void ActivarNoAds()
++{
++    try 
+     {
++        // 1. Guardamos localmente para que el efecto sea instant├íneo
+         PlayerPrefs.SetInt("NoAds", 1);
+-        PlayerPrefs.Save();
+-        Debug.Log("┬íPublicidad eliminada de forma permanente!");
++        
++        // 2. GUARDAMOS EN LA NUBE (UGS) para que sea permanente por perfil
++        var data = new Dictionary<string, object> { { "NoAdsOwned", true } };
++        await Unity.Services.CloudSave.CloudSaveService.Instance.Data.Player.SaveAsync(data);
++        
++        Debug.Log("┬íCompra de NoAds sincronizada con tu perfil en la nube!");
++    }
++    catch (System.Exception e)
++    {
++        Debug.LogError($"Error al sincronizar NoAds: {e.Message}");
+     }
++}
+ 
+     //M├ëTODO OBLIGATORIOS IAP 
+     public void OnInitialized(IStoreController controller, IExtensionProvider extensions) 
+diff --git a/Assets/Scripts/TableMangerLayout.cs b/Assets/Scripts/TableMangerLayout.cs
+index d7fde83..9b4799f 100644
+--- a/Assets/Scripts/TableMangerLayout.cs
++++ b/Assets/Scripts/TableMangerLayout.cs
+@@ -39,8 +39,11 @@ public class TableManagerLayout : MonoBehaviour
+         if (Instance == null) Instance = this;
+     }
+ 
+-    public void GenerarMesa(int numJugadores)
+-    {
++    public void GenerarMesa(int numJugadores, int localSeatIndex)
++    {   
++        
++        if (CardDatabase.deck != null) CardDatabase.deck.Clear(); 
++        manosActivas = new List<CanvasGroup>(); 
+         // 1. Limpieza inicial
+         foreach (Transform child in contenedorHandAreas) Destroy(child.gameObject);
+         manosActivas.Clear();
+@@ -49,13 +52,9 @@ public class TableManagerLayout : MonoBehaviour
+         if (perspectiveManager != null)
+             perspectiveManager.handAreas.Clear();
+ 
+-        // --- ┬íNUEVA L├ôGICA DE RED! ---
+-        // Preguntamos al NetworkManager cu├íl es nuestro n├║mero de jugador
+-        int localId = 0;
+-        if (NetworkManager.Singleton != null && (NetworkManager.Singleton.IsClient || NetworkManager.Singleton.IsHost))
+-        {
+-            localId = (int)NetworkManager.Singleton.LocalClientId;
+-        }
++        // El localSeatIndex viene asignado por el servidor (0..N-1), NO de LocalClientId.
++        // Esto soluciona que NGO asigne IDs no secuenciales (0,7,8,9) entre sesiones.
++        int localId = localSeatIndex;
+ 
+         // 2. MESA VIRTUAL: Calculamos asientos extra
+         int asientosVirtuales = numJugadores;
+@@ -183,6 +182,21 @@ public class TableManagerLayout : MonoBehaviour
+                     else if (visualIndex == 2) { perfilPosX = 0f; perfilPosY = 1700f; } 
+                     else if (visualIndex == 3) { perfilPosX = -1300f; perfilPosY = 400f; } 
+                 }
++                else if (numJugadores == 5)
++                {
++                    if (visualIndex == 1) { perfilPosX = 1250f; perfilPosY = 300f; } 
++                    else if (visualIndex == 2) { perfilPosX = 700f; perfilPosY = 1600f; } 
++                    else if (visualIndex == 3) { perfilPosX = -700f; perfilPosY = 1600f; } 
++                    else if (visualIndex == 4) { perfilPosX = -1250f; perfilPosY = 300f; } 
++                }
++                else if (numJugadores >= 6)
++                {
++                    if (visualIndex == 1) { perfilPosX = 1300f; perfilPosY = 150f; } 
++                    else if (visualIndex == 2) { perfilPosX = 1000f; perfilPosY = 1400f; } 
++                    else if (visualIndex == 3) { perfilPosX = 0f; perfilPosY = 1700f; } 
++                    else if (visualIndex == 4) { perfilPosX = -1000f; perfilPosY = 1400f; } 
++                    else if (visualIndex == 5) { perfilPosX = -1300f; perfilPosY = 150f; } 
++                }
+                 
+                 rtPerfil.anchoredPosition = new Vector2(perfilPosX, perfilPosY);
+                 rtPerfil.localEulerAngles = new Vector3(rotacionX_TodaLaMesa, 0f, 0f); 
+diff --git a/Assets/Scripts/TableZone.cs b/Assets/Scripts/TableZone.cs
+index 6ae6069..73041ef 100644
+--- a/Assets/Scripts/TableZone.cs
++++ b/Assets/Scripts/TableZone.cs
+@@ -73,12 +73,10 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
+             int indexCartaEnMano = cardToMove.transform.GetSiblingIndex();
+ 
+             // Si soy yo mismo el que juega (o soy el Host jugando por un Bot), solicito la jugada
+-            int localId = (int)NetworkManager.Singleton.LocalClientId;
+-            if (duenoIndex == localId || (IsServer && !NetworkManager.Singleton.ConnectedClients.ContainsKey((ulong)duenoIndex)))
++            int localId = InteractionManager.Instance.MySeatIndex;
++            if (duenoIndex == localId || (IsServer && !InteractionManager.Instance.IsPlayerConnectedAndHuman(duenoIndex)))
+             {   
+-                
+                 InteractionManager.Instance.ClearSelection();
+-                //InteractionManager.Instance.isPaused = true;
+                 // Enviar la petici├│n al Servidor
+                 SolicitarJugarCartaServerRpc(duenoIndex, indexCartaEnMano);
+             }
+@@ -98,21 +96,20 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
+         JugarCartaMesaClientRpc(playerIndex, indexCartaEnMano);
+ 
+         // 3. Comprobar si la ronda se ha terminado en el servidor
+-        int jugadoresVivos = 0;
+-        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+-        {
+-            if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivos++;
+-        }
+-
+-        // Si ya han tirado todos los vivos, la mesa estar├í llena 
+-        StartCoroutine(ValidarFinTurnoMesa(jugadoresVivos));
++        StartCoroutine(ValidarFinTurnoMesa());
+     }
+ 
+-    private IEnumerator ValidarFinTurnoMesa(int jugadoresVivos)
++    private IEnumerator ValidarFinTurnoMesa()
+     {
+         yield return new WaitForSeconds(0.1f);
+-        
+-        if (cartasEnMesa.Count >= jugadoresVivos)
++        // RE-CALCULAR vivos ahora, por si alguien se ha desconectado desde que tir├│ la carta
++        int vivosAhora = 0;
++        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
++        {
++            if (InteractionManager.Instance.vidas[i] > 0) vivosAhora++;
++        }
++
++        if (cartasEnMesa.Count >= vivosAhora && vivosAhora > 0)
+         {
+             // Pausar y chequear ganador
+             PausarInteraccionClientRpc();
+@@ -121,11 +118,24 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
+         else
+         {
+             // Siguiente turno
+-            //PausarInteraccionClientRpc();
+             InteractionManager.Instance.ChangeTurn();
+         }
+     }
+ 
++    public void ForzarValidacionMesa()
++    {
++        if (!IsServer) return;
++        int vivosAhora = 0;
++        for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
++            if (InteractionManager.Instance.vidas[i] > 0) vivosAhora++;
++
++        if (vivosAhora > 0 && cartasEnMesa.Count >= vivosAhora)
++        {
++            PausarInteraccionClientRpc();
++            CheckWinner();
++        }
++    }
++
+     [Rpc(SendTo.Everyone)]
+     private void PausarInteraccionClientRpc()
+     {
+@@ -243,7 +253,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
+         // Actualizamos el array local del Cliente con el dato real del Servidor
+         InteractionManager.Instance.bazasGanadas[winnerIndex] = totalBazasDelGanador;
+ 
+-        int localId = (int)NetworkManager.Singleton.LocalClientId;
++        int localId = InteractionManager.Instance.MySeatIndex;
+         if (winnerIndex == localId) InteractionManager.Instance.SetInfoMessage("┬íT├Ü GANAS LA BAZA!\n");
+         else InteractionManager.Instance.SetInfoMessage($"┬íEL JUGADOR {winnerIndex} GANA LA BAZA!\n");
+     }
+@@ -260,10 +270,8 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
+ 
+         string mensajeResultado = "RESULTADOS:\n";
+         InteractionManager.Instance.rondasJugadasTotales++;
+-        int totalPlayers = InteractionManager.Instance.totalPlayers;
+-
+-        bool p1EstabaVivo = InteractionManager.Instance.vidas[0] > 0;
+         int jugadoresVivos = 0;
++        int totalPlayers = InteractionManager.Instance.totalPlayers;
+ 
+         for (int i = 0; i < totalPlayers; i++)
+         {
+@@ -292,20 +300,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
+         // Enviamos la resoluci├│n al resto de jugadores (para que actualicen vidas/texto)
+         SincronizarResolucionRondaClientRpc(mensajeResultado, InteractionManager.Instance.vidas, InteractionManager.Instance.bazasTotales, InteractionManager.Instance.apuestasAcertadasTotales);
+ 
+-        bool p1SigueVivo = InteractionManager.Instance.vidas[0] > 0;
+-
+-        if (p1EstabaVivo && !p1SigueVivo)
+-        {
+-            puestoP1Temp = jugadoresVivos + 1;
+-            Invoke("TriggerFin", 2.0f);
+-            if (jugadoresVivos > 1) StartCoroutine(ResetRoundAfterDelay());
+-        }
+-        else if (jugadoresVivos <= 1)
+-        {
+-            if (p1SigueVivo) puestoP1Temp = 1;
+-            Invoke("TriggerFin", 2.0f);
+-        }
+-        else
++        if (jugadoresVivos > 1)
+         {
+             StartCoroutine(ResetRoundAfterDelay());
+         }
+@@ -316,7 +311,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
+     {
+         InteractionManager.Instance.SetInfoMessage(mensaje);
+         
+-        int localId = (int)NetworkManager.Singleton.LocalClientId;
++        int localId = InteractionManager.Instance.MySeatIndex;
+         // Comprobamos nuestra vida ANTES de actualizar
+         bool estabaVivo = InteractionManager.Instance.vidas[localId] > 0;
+ 
+@@ -340,20 +335,20 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler // NUEVO: Herenc
+         {
+             // Acabo de morir esta ronda
+             int miPuesto = jugadoresVivos + 1;
+-            if (PauseManager.Instance != null) PauseManager.Instance.TriggerGameOver(miPuesto);
++            StartCoroutine(DelayedGameOver(miPuesto, 2f));
+         }
+         else if (jugadoresVivos <= 1 && sigoVivo)
+         {
+             // Quedo yo solo en la mesa, soy el ganador
+-            if (PauseManager.Instance != null) PauseManager.Instance.TriggerGameOver(1);
++            StartCoroutine(DelayedGameOver(1, 2f));
+         }
+     }
+ 
+-    private int puestoP1Temp; 
+-    private void TriggerFin()
++    private System.Collections.IEnumerator DelayedGameOver(int puesto, float delay)
+     {
+-        if(PauseManager.Instance != null)
+-            PauseManager.Instance.TriggerGameOver(puestoP1Temp);
++        yield return new WaitForSeconds(delay);
++        if (PauseManager.Instance != null)
++            PauseManager.Instance.TriggerGameOver(puesto);
+     }
+ 
+     IEnumerator ResetRoundAfterDelay()
+diff --git a/Assets/Scripts/TopBarUI.cs b/Assets/Scripts/TopBarUI.cs
+index c3d136b..480ec36 100644
+--- a/Assets/Scripts/TopBarUI.cs
++++ b/Assets/Scripts/TopBarUI.cs
+@@ -1,5 +1,8 @@
+ using UnityEngine;
+ using TMPro;
++using Unity.Services.CloudSave;
++using System.Collections.Generic;
++using System.Threading.Tasks;
+ 
+ public class TopBarUI : MonoBehaviour
+ {
+@@ -10,52 +13,119 @@ public class TopBarUI : MonoBehaviour
+ 
+     // La memoria interna de las monedas
+     private int monedasActuales;
++    private bool economiaCargada = false; // Candado de seguridad
+ 
+     private void Awake()
+     {
+-        
+         if (Instance == null) Instance = this;
+         else Destroy(gameObject);
+     }
++    // ========================================================
++    // 0. RESTAURACI├ôN DE SESI├ôN (Al volver de una partida)
++    // ========================================================
++    private async void Start()
++    {
++        try
++        {
++            // Comprobamos si UGS ya est├í inicializado y el jugador ya est├í logueado.
++            // Esto solo ser├í VERDADERO cuando volvamos al men├║ tras haber jugado una partida.
++            if (Unity.Services.Core.UnityServices.State == Unity.Services.Core.ServicesInitializationState.Initialized && 
++                Unity.Services.Authentication.AuthenticationService.Instance.IsSignedIn)
++            {
++                Debug.Log("[TOPBAR] Sesi├│n previa detectada. Recargando econom├¡a de la nube...");
++                await CargarEconomiaNube();
++            }
++        }
++        catch (System.Exception e)
++        {
++            Debug.LogWarning($"[TOPBAR] Ignorando comprobaci├│n inicial: {e.Message}");
++        }
++    }
++    
+ 
+-    private void Start()
++    // ========================================================
++    // 1. CARGA DESDE LA NUBE (Llamado por SessionNetworkManager)
++    // ========================================================
++    public async Task CargarEconomiaNube()
+     {
+-        //  Al arrancar el juego, CARGAMOS las monedas guardadas en la memoria del m├│vil.
+-        // Si es la primera vez que juega y no hay guardado, le damos 450 de regalo.
+-        monedasActuales = PlayerPrefs.GetInt("MisMonedas", 450);
+-        
+-        ActualizarPantalla();
++        try
++        {
++            // Pedimos a la nube el valor de "MisMonedas" de ESTE jugador (PlayerID)
++            var query = await CloudSaveService.Instance.Data.Player.LoadAsync(new HashSet<string> { "MisMonedas" });
++
++            if (query.TryGetValue("MisMonedas", out var item))
++            {
++                monedasActuales = item.Value.GetAs<int>();
++                Debug.Log($"[ECONOM├ìA] Monedas descargadas de la nube: {monedasActuales}");
++            }
++            else
++            {
++                // Es un jugador NUEVO en la base de datos. Le damos el regalo y lo subimos.
++                monedasActuales = 450;
++                Debug.Log("[ECONOM├ìA] Jugador nuevo. Asignando 450 monedas de regalo.");
++                await GuardarMonedasNube();
++            }
++
++            economiaCargada = true;
++            ActualizarPantalla();
++        }
++        catch (System.Exception e)
++        {
++            Debug.LogError($"[ECONOM├ìA] Error al conectar con la base de datos: {e.Message}");
++        }
+     }
+ 
+-    
+-    public void ActualizarMonedas(int cantidadASumar)
++    // ========================================================
++    // 2. ACTUALIZACI├ôN Y GUARDADO EN LA NUBE
++    // ========================================================
++    public async void ActualizarMonedas(int cantidadASumar)
+     {
+-        // Sumamos (o restamos) la cantidad
++        if (!economiaCargada) 
++        {
++            Debug.LogWarning("Intento de sumar monedas antes de cargar la econom├¡a.");
++            return;
++        }
++
+         monedasActuales += cantidadASumar;
++        ActualizarPantalla(); // Refresco visual instant├íneo para UX fluida
+ 
+-        // GUARDAMOS el nuevo total en la memoria del m├│vil
+-        PlayerPrefs.SetInt("MisMonedas", monedasActuales);
+-        PlayerPrefs.Save(); 
++        // Guardado as├¡ncrono en la base de datos de Unity
++        await GuardarMonedasNube();
++    }
+ 
+-        // 4. Actualizamos el texto
+-        ActualizarPantalla();
++    private async Task GuardarMonedasNube()
++    {
++        try
++        {
++            // Formato JSON/Diccionario requerido por bases de datos NoSQL
++            var data = new Dictionary<string, object> { { "MisMonedas", monedasActuales } };
++            await CloudSaveService.Instance.Data.Player.SaveAsync(data);
++            Debug.Log($"[ECONOM├ìA] Nube actualizada. Saldo actual: {monedasActuales}");
++        }
++        catch (System.Exception e)
++        {
++            Debug.LogError($"[ECONOM├ìA] Fallo al guardar en la nube: {e.Message}");
++        }
+     }
+ 
+-    // A├▒adir en TopBarUI.cs
++    // ========================================================
++    // 3. M├ëTODOS DE CONSULTA (SIN CAMBIOS)
++    // ========================================================
+     public bool TieneSuficientes(int coste)
+     {
+         return monedasActuales >= coste;
+     }    
++
+     public bool GastarMonedas(int coste)
+     {
+         if (monedasActuales >= coste)
+         {
+             ActualizarMonedas(-coste); 
+-            return true; // Compra exitosa
++            return true; 
+         }
+         
+         Debug.Log("No tienes suficientes monedas.");
+-        return false; // No puede pagar
++        return false; 
+     }
+ 
+     private void ActualizarPantalla()
