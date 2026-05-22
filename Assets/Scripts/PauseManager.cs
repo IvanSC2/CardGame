@@ -28,6 +28,11 @@ public class PauseManager : NetworkBehaviour
 
         if (pausePanel != null) pausePanel.SetActive(false);
         Time.timeScale = 1f;
+
+        // ANALÍTICAS: Registrar el inicio de la partida
+        GameConfig.matchStartTime = Time.realtimeSinceStartup;
+        if (AnalyticsManager.Instance != null)
+            AnalyticsManager.Instance.EventoMatchStarted(GameConfig.currentMatchMode, GameConfig.nPlayers);
     }
 
     private void Update()
@@ -175,6 +180,16 @@ public class PauseManager : NetworkBehaviour
         // Encendemos el panel visual
         pausePanel.SetActive(true); 
 
+        // ANALÍTICAS: Evento match_completed (Funnel 1, paso 4)
+        if (AnalyticsManager.Instance != null)
+        {
+            int duracion = Mathf.RoundToInt(Time.realtimeSinceStartup - GameConfig.matchStartTime);
+            int dineroAnalytics = 0;
+            if (puesto == 1) dineroAnalytics += GameConfig.currentPrize;
+            dineroAnalytics -= GameConfig.currentFee;
+            AnalyticsManager.Instance.EventoMatchCompleted(puesto, duracion, dineroAnalytics, GameConfig.currentMatchMode);
+        }
+
         // 5. Congelamos el tiempo SOLO si ya no quedan humanos
         if (otrosHumanosVivos == 0)
         {
@@ -264,6 +279,13 @@ public async void QuitGame()
         }
 
         GameConfig.prizeAwarded = true; 
+    }
+
+    // ANALÍTICAS: Evento match_abandoned
+    if (AnalyticsManager.Instance != null)
+    {
+        int duracion = Mathf.RoundToInt(Time.realtimeSinceStartup - GameConfig.matchStartTime);
+        AnalyticsManager.Instance.EventoMatchAbandoned(duracion, GameConfig.isHostLobby, GameConfig.currentMatchMode);
     }
 
     // Si el gestor de red existe, cerramos la sesión de UGS y apagamos Netcode

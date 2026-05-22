@@ -24,4 +24,7 @@ public static class GameConfig
     // Valores: "practice", "private", "public"
     public static string currentMatchMode = "practice";
     public static bool gameStarted = false;
+
+    // ANALÍTICAS: Hora de inicio de la partida para medir duración
+    public static float matchStartTime = 0f;
 }

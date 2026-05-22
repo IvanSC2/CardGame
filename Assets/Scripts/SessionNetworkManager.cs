@@ -47,6 +47,9 @@ public class SessionNetworkManager : MonoBehaviour
                 if (TopBarUI.Instance != null) await TopBarUI.Instance.CargarEconomiaNube();
                 if (ProfileManager.Instance != null) await ProfileManager.Instance.CargarPerfilCompleto();
                 await SincronizarNoAds();
+
+                // ANALÍTICAS: Iniciar recolección tras autenticar
+                if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.IniciarRecoleccion();
             }
         }
         catch (System.Exception e) { Debug.LogError($"Error grave al arrancar UGS: {e.Message}"); }
@@ -187,6 +190,9 @@ public class SessionNetworkManager : MonoBehaviour
         try
         {
             Debug.Log("[MATCHMAKING] Iniciando emparejamiento por Tickets en la nube...");
+
+            // ANALÍTICAS: Evento matchmaking_started
+            if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.EventoMatchmakingStarted("public");
             
             if (lobbyUI != null && lobbyUI.btnLeaveMatchmaking != null)
                 lobbyUI.btnLeaveMatchmaking.gameObject.SetActive(true);
@@ -327,6 +333,10 @@ public class SessionNetworkManager : MonoBehaviour
         try
         {
             Time.timeScale = 1f;
+
+            // ANALÍTICAS: Evento host_abandoned (el host nos ha echado)
+            if (AnalyticsManager.Instance != null) 
+                AnalyticsManager.Instance.EventoHostAbandoned(GameConfig.currentMatchMode);
 
             // MONETIZACIÓN: Reembolsos por culpa del Host
             // Si esto se llama, significa que el Servidor se ha ido y somos un cliente (o fuimos expulsados).

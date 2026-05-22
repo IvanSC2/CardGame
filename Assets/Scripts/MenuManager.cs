@@ -65,6 +65,9 @@ public class MenuManager : MonoBehaviour
         {
             welcomePanel.SetActive(true);
         }
+
+        // ANALÍTICAS: Evento app_opened (Funnel 1, paso 1)
+        if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.EventoAppOpened();
     }
 
     // --- MÁQUINA DE ESTADOS ---
@@ -85,13 +88,26 @@ public class MenuManager : MonoBehaviour
         }
     }
     public void MostrarPerfil() { ApagarTodosLosPaneles(); if(panelProfile != null) panelProfile.SetActive(true); }
-    public void MostrarTienda() { ApagarTodosLosPaneles(); if(panelShop != null) panelShop.SetActive(true); }
+    public void MostrarTienda() 
+    { 
+        ApagarTodosLosPaneles(); 
+        if(panelShop != null) panelShop.SetActive(true);
+        // ANALÍTICAS: Evento shop_opened (Funnel 2, paso 2)
+        if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.EventoShopOpened();
+    }
 
     public void IniciarFlujoPractica() { GameConfig.currentMatchMode = "practice"; ApagarTodosLosPaneles(); if(panelPractice != null) panelPractice.SetActive(true); }
     public void IniciarFlujoPublico() { GameConfig.currentMatchMode = "public"; ApagarTodosLosPaneles(); if(panelMatchmakingLobby != null) panelMatchmakingLobby.SetActive(true); if(bBack != null) bBack.gameObject.SetActive(false); if(pToolBar != null) pToolBar.SetActive(false); }
     
     // Al pulsar "Private" en el Hub, venimos aquí:
-    public void IniciarFlujoPrivado() { GameConfig.currentMatchMode = "private"; ApagarTodosLosPaneles(); if(panelPrivateChoice != null) panelPrivateChoice.SetActive(true); }
+    public void IniciarFlujoPrivado() 
+    { 
+        GameConfig.currentMatchMode = "private"; 
+        ApagarTodosLosPaneles(); 
+        if(panelPrivateChoice != null) panelPrivateChoice.SetActive(true);
+        // ANALÍTICAS: Evento matchmaking_started (Funnel 1, paso 2)
+        if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.EventoMatchmakingStarted("private");
+    }
 
     // Al pulsar "Join" en pPrivate, venimos aquí:
     public void MostrarPrivateJoin() { ApagarTodosLosPaneles(); if(panelPrivateJoin != null) panelPrivateJoin.SetActive(true); }
@@ -158,6 +174,10 @@ public class MenuManager : MonoBehaviour
             
             Unity.Netcode.NetworkManager.Singleton.StartHost();
             Unity.Netcode.NetworkManager.Singleton.SceneManager.LoadScene("MainGame", UnityEngine.SceneManagement.LoadSceneMode.Single);
+
+            // ANALÍTICAS: Evento match_started (Funnel 1, paso 3)
+            GameConfig.matchStartTime = Time.realtimeSinceStartup;
+            if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.EventoMatchStarted("practice", maxJugadores);
         }
         else
         {

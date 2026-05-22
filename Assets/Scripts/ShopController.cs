@@ -67,6 +67,9 @@ public class ShopController : MonoBehaviour, IStoreListener
         else if (idProductoPendiente == id_750k) EntregarPremio(750000);
         else if (idProductoPendiente == id_remove_ads) ActivarNoAds();
         
+        // ANALÍTICAS: Evento purchase_completed (Funnel 2, paso 3)
+        if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.EventoPurchaseCompleted(idProductoPendiente);
+
         idProductoPendiente = "";
 #else
         // MODO MÓVIL
@@ -104,6 +107,9 @@ public class ShopController : MonoBehaviour, IStoreListener
         else if (idComprado == id_250k) EntregarPremio(250000);
         else if (idComprado == id_750k) EntregarPremio(750000);
         else if (idComprado == id_remove_ads) ActivarNoAds();
+
+        // ANALÍTICAS: Evento purchase_completed (Funnel 2, paso 3)
+        if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.EventoPurchaseCompleted(idComprado);
 
         return PurchaseProcessingResult.Complete;
     }
