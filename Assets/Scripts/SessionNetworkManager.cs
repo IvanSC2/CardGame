@@ -45,6 +45,7 @@ public class SessionNetworkManager : MonoBehaviour
                 Debug.Log($"[3/3] Autenticado en la nube. PlayerID: {AuthenticationService.Instance.PlayerId}");
 
                 if (TopBarUI.Instance != null) await TopBarUI.Instance.CargarEconomiaNube();
+                if (ProfileManager.Instance != null) await ProfileManager.Instance.CargarPerfilCompleto();
                 await SincronizarNoAds();
             }
         }
@@ -329,13 +330,12 @@ public class SessionNetworkManager : MonoBehaviour
 
             // MONETIZACIÓN: Reembolsos por culpa del Host
             // Si esto se llama, significa que el Servidor se ha ido y somos un cliente (o fuimos expulsados).
-            // Si el fee ya fue deducido (la partida arrancó) y no se dio premio aún:
+            // Si el fee ya fue deducido (la partida arrancó o estamos en lobby) y no se dio premio aún:
             if (GameConfig.currentFee > 0 && !GameConfig.prizeAwarded)
             {
-                if (GameConfig.isPrivateMatch)
+                if (GameConfig.gameStarted)
                 {
-                    // Privada: Devolvemos fee y repartimos la penalización del host + el fee de los que huyeron
-                    // entre los clientes que siguen vivos.
+                    // Calcular cuántos clientes siguen vivos
                     int clientesVivos = 1; // Mínimo 1 (tú mismo)
                     
                     if (InteractionManager.Instance != null && InteractionManager.Instance.vidas != null)
@@ -353,22 +353,67 @@ public class SessionNetworkManager : MonoBehaviour
                         if (clientesVivos < 1) clientesVivos = 1; // Failsafe
                     }
 
-                    // Pool = Penalización del Host + Fee de todos los clientes
-                    // Penalización del Host = Fee * (nHumanPlayers - 1)
-                    // Fee total aportado por clientes = Fee * (nHumanPlayers - 1)
-                    // Total Pool = 2 * Fee * (nHumanPlayers - 1)
-                    int poolTotal = 2 * GameConfig.currentFee * (GameConfig.nHumanPlayers - 1);
-                    
-                    // Repartir equitativamente entre los vivos (el fee original + su parte del botín)
-                    int recompensa = poolTotal / clientesVivos;
-                    
-                    TopBarUI.Instance.ActualizarMonedas(recompensa);
+                    if (GameConfig.isPrivateMatch)
+                    {
+                        // Privada: Devolvemos fee y repartimos la penalización del host + el fee de los que huyeron
+                        int poolTotal = 2 * GameConfig.currentFee * (GameConfig.nHumanPlayers - 1);
+                        int recompensa = poolTotal / clientesVivos;
+                        
+                        TopBarUI.Instance.ActualizarMonedas(recompensa);
+
+                        if (ProfileManager.Instance != null)
+                        {
+                            List<string> nombres = new List<string>();
+                            if (InteractionManager.Instance != null)
+                            {
+                                for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+                                    nombres.Add(InteractionManager.Instance.GetPlayerName(i));
+                            }
+
+                            ProfileManager.Instance.RegistrarResultadoPartida(
+                                GameConfig.currentMatchMode,
+                                clientesVivos,
+                                GameConfig.nPlayers,
+                                recompensa - GameConfig.currentFee,
+                                nombres,
+                                GameConfig.difficulty,
+                                "Interrumpida"
+                            );
+                        }
+                    }
+                    else
+                    {
+                        // Pública: Devolvemos fee íntegro
+                        TopBarUI.Instance.ActualizarMonedas(GameConfig.currentFee);
+
+                        if (ProfileManager.Instance != null)
+                        {
+                            List<string> nombres = new List<string>();
+                            if (InteractionManager.Instance != null)
+                            {
+                                for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+                                    nombres.Add(InteractionManager.Instance.GetPlayerName(i));
+                            }
+
+                            ProfileManager.Instance.RegistrarResultadoPartida(
+                                GameConfig.currentMatchMode,
+                                clientesVivos,
+                                GameConfig.nPlayers,
+                                0, // No pierde ni gana
+                                nombres,
+                                GameConfig.difficulty,
+                                "Interrumpida"
+                            );
+                        }
+                    }
                 }
                 else
                 {
-                    // Pública: Devolvemos fee íntegro (fue culpa del matchmaking/host random)
+                    // El juego no había empezado (estábamos en el Lobby buscando o esperando).
+                    // Simplemente devolvemos el dinero de la entrada sin registrar partida.
                     TopBarUI.Instance.ActualizarMonedas(GameConfig.currentFee);
                 }
+
                 GameConfig.prizeAwarded = true; // Para no devolver dos veces
             }
 

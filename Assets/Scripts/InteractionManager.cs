@@ -1,9 +1,11 @@
 using UnityEngine;
+using UnityEngine.UI;
 using TMPro;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine.SceneManagement;
 using Unity.Netcode;
+using System.IO;
 
 public enum GameState { PLAYER_TURN, AI_TURN, WAITING }
 
@@ -65,6 +67,12 @@ public class InteractionManager : NetworkBehaviour
     private System.Collections.Generic.Dictionary<int, ulong> _seatToClient
         = new System.Collections.Generic.Dictionary<int, ulong>();
 
+    // SISTEMA DE NOMBRES (sincronizado por red)
+    private string[] _playerNames;
+
+    // SISTEMA DE AVATARES (sincronizado por red)
+    private Sprite[] _playerAvatars;
+
     public bool IsPlayerConnectedAndHuman(int seatIndex)
     {
         return _seatToClient.TryGetValue(seatIndex, out ulong cid) && NetworkManager.Singleton.ConnectedClients.ContainsKey(cid);
@@ -78,8 +86,9 @@ public class InteractionManager : NetworkBehaviour
 
     private void Awake()
     {
-        if (Instance != null && Instance != this) Destroy(this.gameObject);
-        else Instance = this;
+        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
+        Instance = this;
+        GameConfig.gameStarted = true;
         currentState = GameState.WAITING;
 
         string[] nombresDificultad = { "Pacifico", "Normal", "Difícil", "Experto", "Imposible" };
@@ -174,11 +183,148 @@ public class InteractionManager : NetworkBehaviour
 
         Debug.Log($"[ASIENTOS] ClientId={myId} → Asiento #{_mySeatIndex}. Generando mesa para {totalMesa}.");
 
+        // Inicializar array de nombres con valores por defecto
+        _playerNames = new string[totalMesa];
+        for (int i = 0; i < totalMesa; i++)
+            _playerNames[i] = $"JUGADOR {i}";
+
+        // Enviar mi nombre real al servidor para que lo distribuya
+        string miNombre = "Invitado";
+        if (ProfileManager.Instance != null && ProfileManager.Instance.TieneNickname())
+            miNombre = ProfileManager.Instance.GetDisplayName();
+        
+        _playerNames[_mySeatIndex] = miNombre;
+        EnviarNombreAlServidorRpc(miNombre);
+
+        // Inicializar array de avatares
+        _playerAvatars = new Sprite[totalMesa];
+
+        // Enviar mi avatar al servidor para que lo distribuya
+        byte[] avatarBytes = ObtenerMiAvatarComprimido();
+        if (avatarBytes != null && avatarBytes.Length > 0)
+            EnviarAvatarAlServidorRpc(avatarBytes);
+
         if (!_mesaGenerada)
         {
             _mesaGenerada = true;
             StartCoroutine(EsperarYGenerar(totalMesa));
         }
+    }
+
+    // --- SINCRONIZACIÓN DE NOMBRES ---
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    private void EnviarNombreAlServidorRpc(string nombre, RpcParams rpcParams = default)
+    {
+        ulong senderId = rpcParams.Receive.SenderClientId;
+        if (_clientToSeat.TryGetValue(senderId, out int seat))
+        {
+            if (_playerNames == null || seat >= _playerNames.Length) return;
+            _playerNames[seat] = nombre;
+            Debug.Log($"[NOMBRES] Asiento {seat} = \"{nombre}\" (clientId={senderId})");
+
+            // Reenviar a todos los clientes unidos por "|" para evitar el error de serialización de arrays
+            string nombresUnidos = string.Join("|", _playerNames);
+            SincronizarNombresClientRpc(nombresUnidos);
+        }
+    }
+
+    [Rpc(SendTo.Everyone)]
+    private void SincronizarNombresClientRpc(string nombresUnidos)
+    {
+        if (!string.IsNullOrEmpty(nombresUnidos))
+        {
+            _playerNames = nombresUnidos.Split('|');
+        }
+        // Solo refrescar si la mesa ya está generada
+        if (_mesaGenerada)
+            ActualizarTodosLosPerfilesUI();
+    }
+
+    // --- SINCRONIZACIÓN DE AVATARES ---
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    private void EnviarAvatarAlServidorRpc(byte[] avatarBytes, RpcParams rpcParams = default)
+    {
+        ulong senderId = rpcParams.Receive.SenderClientId;
+        if (_clientToSeat.TryGetValue(senderId, out int seat))
+        {
+            Debug.Log($"[AVATAR] Recibido avatar del asiento {seat} ({avatarBytes.Length} bytes)");
+            SincronizarAvatarClientRpc(seat, avatarBytes);
+        }
+    }
+
+    [Rpc(SendTo.Everyone)]
+    private void SincronizarAvatarClientRpc(int seatIndex, byte[] avatarBytes)
+    {
+        if (avatarBytes == null || avatarBytes.Length == 0) return;
+        if (_playerAvatars == null || seatIndex < 0 || seatIndex >= _playerAvatars.Length) return;
+
+        Texture2D tex = new Texture2D(2, 2);
+        if (tex.LoadImage(avatarBytes))
+        {
+            _playerAvatars[seatIndex] = Sprite.Create(tex,
+                new Rect(0, 0, tex.width, tex.height),
+                new Vector2(0.5f, 0.5f));
+            Debug.Log($"[AVATAR] Avatar del asiento {seatIndex} reconstruido ({tex.width}x{tex.height})");
+        }
+
+        if (_mesaGenerada)
+            ActualizarTodosLosPerfilesUI();
+    }
+
+    /// <summary>Devuelve el avatar del jugador en el asiento indicado (null si no tiene).</summary>
+    public Sprite GetPlayerAvatar(int seatIndex)
+    {
+        if (_playerAvatars != null && seatIndex >= 0 && seatIndex < _playerAvatars.Length)
+            return _playerAvatars[seatIndex];
+        return null;
+    }
+
+    /// <summary>Comprime el avatar local del jugador a PNG de 128x128 para enviar por red.</summary>
+    private byte[] ObtenerMiAvatarComprimido()
+    {
+        if (ProfileManager.Instance == null) return null;
+        var profile = ProfileManager.Instance.Profile;
+
+        // Solo si tiene avatar personalizado
+        if (profile.avatarId != -1 || string.IsNullOrEmpty(profile.customAvatarPath)) return null;
+        if (!File.Exists(profile.customAvatarPath)) return null;
+
+        try
+        {
+            byte[] rawBytes = File.ReadAllBytes(profile.customAvatarPath);
+            Texture2D original = new Texture2D(2, 2);
+            if (!original.LoadImage(rawBytes)) return null;
+
+            // Redimensionar a 128x128 para minimizar tráfico de red
+            int targetSize = 128;
+            RenderTexture rt = RenderTexture.GetTemporary(targetSize, targetSize);
+            Graphics.Blit(original, rt);
+
+            RenderTexture prev = RenderTexture.active;
+            RenderTexture.active = rt;
+            Texture2D scaled = new Texture2D(targetSize, targetSize, TextureFormat.RGBA32, false);
+            scaled.ReadPixels(new Rect(0, 0, targetSize, targetSize), 0, 0);
+            scaled.Apply();
+            RenderTexture.active = prev;
+            RenderTexture.ReleaseTemporary(rt);
+
+            byte[] compressed = scaled.EncodeToPNG();
+            Debug.Log($"[AVATAR] Avatar local comprimido: {compressed.Length} bytes");
+            return compressed;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[AVATAR] Error al comprimir avatar: {e.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>Devuelve el nombre visible del jugador en el asiento indicado.</summary>
+    public string GetPlayerName(int seatIndex)
+    {
+        if (_playerNames != null && seatIndex >= 0 && seatIndex < _playerNames.Length)
+            return _playerNames[seatIndex];
+        return $"JUGADOR {seatIndex}";
     }
 
 
@@ -311,6 +457,9 @@ public class InteractionManager : NetworkBehaviour
         yield return new WaitUntil(() => TableManagerLayout.Instance != null);
         yield return new WaitForSeconds(0.2f);
         ArrancarMesaLocal(numJugadores);
+        // Refresco de nombres y avatares: si los RPCs llegaron antes de generar la mesa,
+        // los perfiles se quedaron con "JUGADOR X" y sin avatar. Este refresco los corrige.
+        ActualizarTodosLosPerfilesUI();
     }
 
     private void ArrancarMesaLocal(int numJugadores)
@@ -639,12 +788,14 @@ public class InteractionManager : NetworkBehaviour
     // ========================================================================
     public void ActualizarTodosLosPerfilesUI()
     {
+        if (TableManagerLayout.Instance == null) return;
         for (int i = 0; i < totalPlayers; i++)
         {
             if (TableManagerLayout.Instance.perfilesActivos.Count > i)
             {
-                string nombre = (i == _mySeatIndex) ? "TÚ" : $"JUGADOR {i}";
-                TableManagerLayout.Instance.perfilesActivos[i].ActualizarPerfil(nombre, vidas[i], bazasGanadas[i], apuestas[i]);
+                string nombre = GetPlayerName(i);
+                Sprite avatar = GetPlayerAvatar(i);
+                TableManagerLayout.Instance.perfilesActivos[i].ActualizarPerfil(nombre, vidas[i], bazasGanadas[i], apuestas[i], avatar);
             }
         }
     }

@@ -20,4 +20,8 @@ public static class GameConfig
     //4: Imposible Mode
     public static int difficulty=1; 
 
+    // PERFIL: Modo de la partida actual (para registrar estadísticas correctamente)
+    // Valores: "practice", "private", "public"
+    public static string currentMatchMode = "practice";
+    public static bool gameStarted = false;
 }

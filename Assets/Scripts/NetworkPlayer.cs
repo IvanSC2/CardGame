@@ -1,29 +1,24 @@
 using Unity.Netcode;
 using UnityEngine;
+using Unity.Collections;
+using Unity.Services.Authentication;
 
 public class NetworkPlayer : NetworkBehaviour
 {
-    // Esto se ejecuta cuando el objeto aparece en la red
+    public NetworkVariable<FixedString64Bytes> UgsId = new NetworkVariable<FixedString64Bytes>("", NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
+    public NetworkVariable<FixedString64Bytes> PlayerName = new NetworkVariable<FixedString64Bytes>("", NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
+
     public override void OnNetworkSpawn()
     {
         if (IsOwner)
         {
-            // Solo el dueño del objeto envia el saludo
-            EnviarSaludoServerRpc($"¡Hola! Soy el jugador {OwnerClientId}");
+            if (AuthenticationService.Instance.IsSignedIn)
+                UgsId.Value = AuthenticationService.Instance.PlayerId;
+
+            if (ProfileManager.Instance != null && ProfileManager.Instance.TieneNickname())
+                PlayerName.Value = ProfileManager.Instance.GetDisplayName();
+            else
+                PlayerName.Value = "Invitado";
         }
-    }
-
-    [ServerRpc] // Este código lo envía el Cliente pero se ejecuta SOLO en el Host
-    private void EnviarSaludoServerRpc(string mensaje)
-    {
-        Debug.Log($"[SERVIDOR] Recibido del cliente: {mensaje}");
-        // Ahora el Host le responde a todos
-        ResponderTodosClientRpc(mensaje + " (Confirmado por el Servidor)");
-    }
-
-    [ClientRpc] // Este código lo envía el Host pero se ejecuta en TODOS los Clientes
-    private void ResponderTodosClientRpc(string mensaje)
-    {
-        Debug.Log($"[CLIENTE] El servidor dice: {mensaje}");
     }
 }

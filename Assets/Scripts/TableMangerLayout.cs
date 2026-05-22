@@ -204,15 +204,14 @@ public class TableManagerLayout : MonoBehaviour
                 if (profileUI != null)
                 {
                     perfilesActivos.Add(profileUI);
-                    // Si el índice de red coincide con tu ID local, eres tú.
-                    string nombre = (i == localId) ? "TÚ" : $"JUGADOR {i}";
+                    string nombre = $"JUGADOR {i}";
                     profileUI.ActualizarPerfil(nombre, 3, 0, -1);
                 }
             }
         }
 
         // --- ORDEN DE DIBUJADO (Aseguramos que tu mano se dibuje la última para tapar al resto) ---
-        // Como sabemos que tú eres el 'localId', mandamos tu mano al final.
+        
         if (manosGeneradas.Length > localId && manosGeneradas[localId] != null)
         {
             manosGeneradas[localId].transform.SetAsLastSibling();

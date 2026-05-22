@@ -181,8 +181,9 @@ public class MenuLobbyUI : MonoBehaviour
 
     private int _lastConectadosNube = -1;
     private string _listaGeneradaCache = "";
+    private float _refreshNombresTimer = 0f;
 
-  private void Update()
+    private void Update()
     {
         if (SessionNetworkManager.Instance == null || SessionNetworkManager.Instance.currentSession == null) return;
         if (MenuManager.Instance == null) return;
@@ -190,7 +191,15 @@ public class MenuLobbyUI : MonoBehaviour
         int conectadosNube = session.Players.Count;
         int maxJugadores = session.MaxPlayers;
 
-        if (conectadosNube != _lastConectadosNube)
+        _refreshNombresTimer -= Time.deltaTime;
+        bool forceRefresh = false;
+        if (_refreshNombresTimer <= 0f)
+        {
+            forceRefresh = true;
+            _refreshNombresTimer = 0.5f; // Refrescar nombres periódicamente
+        }
+
+        if (conectadosNube != _lastConectadosNube || forceRefresh)
         {
             _lastConectadosNube = conectadosNube;
             int premioActual = CalcularPremioDinamico(conectadosNube, maxJugadores);
@@ -206,14 +215,60 @@ public class MenuLobbyUI : MonoBehaviour
             if (txtJugadoresCliente != null) txtJugadoresCliente.text = textoContador;
             if (txtJugadoresMatchmaking != null) txtJugadoresMatchmaking.text = textoContador;
 
-            string listaBase = "";
+            string listaPrivada = "";
+            string miNombre = (ProfileManager.Instance != null && ProfileManager.Instance.TieneNickname())
+                ? ProfileManager.Instance.GetDisplayName()
+                : "TÚ";
+
+            // Buscamos en qué índice está el jugador local dentro de la lista de jugadores de UGS
+            var playersList = session.Players; // IReadOnlyList<IReadOnlyPlayer>
+            int miIndice = -1;
+            if (session.CurrentPlayer != null)
+            {
+                for (int k = 0; k < playersList.Count; k++)
+                {
+                    if (playersList[k].Id == session.CurrentPlayer.Id)
+                    {
+                        miIndice = k;
+                        break;
+                    }
+                }
+            }
+
             for (int i = 0; i < conectadosNube; i++)
             {
-                if (i == 0) listaBase += session.IsHost ? "TÚ (Host)\n" : "HOST\n";
-                else listaBase += $"JUGADOR {i}\n";
+                bool esMiSlot = (i == miIndice);
+                bool esHostSlot = (i == 0);
+                
+                string idUgsActual = playersList[i].Id;
+                string nombreJugador = $"Invitado {i}";
+
+                if (esMiSlot) 
+                {
+                    nombreJugador = miNombre;
+                }
+                else 
+                {
+                    // Buscar si algún NetworkPlayer en la escena coincide con este ID de UGS
+                    NetworkPlayer[] netPlayers = Object.FindObjectsByType<NetworkPlayer>(FindObjectsSortMode.None);
+                    foreach (var np in netPlayers)
+                    {
+                        if (np.UgsId.Value.ToString() == idUgsActual && !string.IsNullOrEmpty(np.PlayerName.Value.ToString()))
+                        {
+                            nombreJugador = np.PlayerName.Value.ToString();
+                            break;
+                        }
+                    }
+                }
+
+                if (esHostSlot)
+                    listaPrivada += $"{nombreJugador} (Host)\n";
+                else
+                    listaPrivada += $"{nombreJugador}\n";
             }
-            // Guardamos la base de la lista. En matchmaking se le añadirá el timer cada frame.
-            _listaGeneradaCache = listaBase;
+
+            // Guardamos la base de la lista. En matchmaking solo usamos el timer.
+            _listaGeneradaCache = listaPrivada;
             
             // Si es privada, ya podemos setear el texto final (porque no hay timer)
             if (session.IsPrivate)
@@ -230,15 +285,15 @@ public class MenuLobbyUI : MonoBehaviour
             // Restamos tiempo en cada frame
             tiempoEsperaArranque -= Time.deltaTime;
 
-            // Añadimos la cuenta atrás visualmente a la lista de jugadores
-            string listaFinal = _listaGeneradaCache;
+            // En públicas ya NO mostramos la lista de nombres, solo el contador y el timer
+            string listaFinal = "";
             if (tiempoEsperaArranque > 0)
             {
-                listaFinal += $"\n<color=yellow>¡Partida encontrada!\nIniciando en {Mathf.CeilToInt(tiempoEsperaArranque)}...</color>";
+                listaFinal = $"<color=yellow>¡Partida encontrada!\nIniciando en {Mathf.CeilToInt(tiempoEsperaArranque)}...</color>";
             }
             else
             {
-                listaFinal += "\n<color=green>¡Conectando...</color>";
+                listaFinal = "<color=green>¡Conectando...</color>";
             }
 
             // 3. ASIGNACIÓN A TODAS LAS LISTAS (Con el contador incluido)
@@ -444,7 +499,7 @@ public class MenuLobbyUI : MonoBehaviour
     public int CalcularPremioDinamico(int conectados, int maximo)
 {
     // 1. Obtenemos el Fee (Cuota) que configuró el Host
-    // Asumimos que lo tienes guardado en GameConfig o lo leemos del selector
+    
     string textoFee = MenuManager.Instance.privateEntryFee.opciones[MenuManager.Instance.privateEntryFee.ObtenerIndice()];
     int entryFee = int.Parse(textoFee);
 
@@ -494,7 +549,7 @@ public class MenuLobbyUI : MonoBehaviour
 }
 
     // Corrutina principal de transición: espera (máx 10s) a que todas las conexiones
-    // NGO estén listas antes de cargar la escena. Soluciona la race condition donde
+
     // el timer o EvaluacionCondicionTransicion disparan LoadScene antes de que el
     // handshake NGO de todos los clientes esté completo → solo X de N jugadores jugaban.
     private System.Collections.IEnumerator EsperarConexionesYCargar(int jugadoresEsperados)
@@ -558,6 +613,7 @@ public void AbandonarLobby()
 
     public void ResetearLobbyCompleto()
     {
+        _lastConectadosNube = -1;
         ResetearBuscador();
 
         if (bBack != null) bBack.gameObject.SetActive(true);

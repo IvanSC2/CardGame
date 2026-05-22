@@ -4,6 +4,7 @@ using UnityEngine.SceneManagement;
 using TMPro;
 using UnityEngine.UI;
 using Unity.Netcode;
+using System.Collections.Generic;
 
 public class PauseManager : NetworkBehaviour
 {
@@ -66,6 +67,8 @@ public class PauseManager : NetworkBehaviour
     //  RECIBE EL PUESTO NUMÉRICO 
    public void TriggerGameOver(int puesto)
     {
+        // Guard: evita que el Host registre el historial N veces (1 por jugador)
+        if (isGameOver) return;
         isGameOver = true;
 
         if (titleText != null)
@@ -112,11 +115,12 @@ public class PauseManager : NetworkBehaviour
             statsText.gameObject.SetActive(true);
             var im = InteractionManager.Instance;
             int rondas = im.rondasJugadasTotales;
+            int miAsiento = im.MySeatIndex;
 
             string stats =
                 $"Puesto No {puesto}\n" +
-                $"Apuestas Cumplidas: <b>{im.apuestasAcertadasTotales[0]}</b> / {rondas}\n" +
-                $"Bazas Ganadas: <b>{im.bazasTotales[0]}</b>\n";
+                $"Apuestas Cumplidas: <b>{im.apuestasAcertadasTotales[miAsiento]}</b> / {rondas}\n" +
+                $"Bazas Ganadas: <b>{im.bazasTotales[miAsiento]}</b>\n";
 
             statsText.text = stats;
             statsText.alignment = TextAlignmentOptions.Center;
@@ -139,6 +143,33 @@ public class PauseManager : NetworkBehaviour
             }
             
             GameConfig.prizeAwarded = true;
+        }
+
+        // PERFIL: Registrar resultado de la partida en estadísticas + historial
+        // Esto lo ejecuta CADA cliente de forma independiente en su propia máquina.
+        // NO depende del Host. Cada uno sabe su propio puesto y calcula su propio dinero.
+        if (ProfileManager.Instance != null)
+        {
+            int totalJugadores = InteractionManager.Instance != null 
+                ? InteractionManager.Instance.totalPlayers 
+                : GameConfig.nPlayers;
+
+            int dineroPartida = 0;
+            if (puesto == 1) dineroPartida += GameConfig.currentPrize;
+            if (!GameConfig.isPrivateMatch && GameConfig.isHostLobby) dineroPartida += 50;
+            dineroPartida -= GameConfig.currentFee;
+
+            // Recopilar nombres de todos los jugadores para el historial
+            List<string> nombres = ObtenerNombresParaHistorial();
+
+            ProfileManager.Instance.RegistrarResultadoPartida(
+                GameConfig.currentMatchMode,
+                puesto,
+                totalJugadores,
+                dineroPartida,
+                nombres,
+                GameConfig.difficulty
+            );
         }
 
         // Encendemos el panel visual
@@ -182,30 +213,63 @@ public class PauseManager : NetworkBehaviour
 public async void QuitGame() 
 { 
     Time.timeScale = 1f;
+    isGameOver = true; // Prevenir que TriggerGameOver salte a la vez por la desconexión
 
-    // MONETIZACIÓN: Penalización por abandono voluntario del Host en Privadas
-    if (!GameConfig.prizeAwarded && GameConfig.currentFee > 0)
+    // MONETIZACIÓN y ESTADÍSTICAS: Penalización por abandono voluntario
+    if (!GameConfig.prizeAwarded && GameConfig.currentFee >= 0)
     {
-        if (GameConfig.isPrivateMatch && GameConfig.isHostLobby)
+        // 1. Calculamos vivos para saber en qué puesto te vas
+        int vivos = 1;
+        if (InteractionManager.Instance != null && InteractionManager.Instance.vidas != null)
         {
-            // El Host de una privada huye: pierde la fianza de los demás (él ya pagó la suya)
+            vivos = 0;
+            foreach (int v in InteractionManager.Instance.vidas) if (v > 0) vivos++;
+        }
+        if (vivos < 1) vivos = 1;
+
+        int dineroHistorial = -GameConfig.currentFee; // Por defecto pierdes el fee
+
+        if (GameConfig.isPrivateMatch && GameConfig.isHostLobby && GameConfig.currentFee > 0)
+        {
+            // El Host de una privada huye: pierde la fianza de los demás
             int penalty = GameConfig.currentFee * (GameConfig.nHumanPlayers - 1);
             if (penalty > 0)
             {
                 TopBarUI.Instance.GastarMonedas(penalty);
-                Debug.Log($"[ECONOMÍA] Penalización por abandonar hosteando: -{penalty} monedas.");
+                Debug.Log($"[ECONOMÍA] Penalización por abandonar hosteando privada: -{penalty} monedas.");
             }
         }
+        else if (!GameConfig.isPrivateMatch)
+        {
+            // PÚBLICA: Nadie pierde dinero si el host se va — reembolso del fee
+            TopBarUI.Instance.ActualizarMonedas(GameConfig.currentFee);
+            dineroHistorial = 0; // En el historial aparece 0
+            Debug.Log($"[ECONOMÍA] Matchmaking público: reembolso de {GameConfig.currentFee} monedas.");
+        }
+
+        // Registrar en el historial como "Abandonada"
+        if (ProfileManager.Instance != null)
+        {
+            List<string> nombres = ObtenerNombresParaHistorial();
+
+            ProfileManager.Instance.RegistrarResultadoPartida(
+                GameConfig.currentMatchMode,
+                vivos,
+                GameConfig.nPlayers,
+                dineroHistorial,
+                nombres, 
+                GameConfig.difficulty,
+                "Abandonada"
+            );
+        }
+
         GameConfig.prizeAwarded = true; 
     }
 
     // Si el gestor de red existe, cerramos la sesión de UGS y apagamos Netcode
     if (SessionNetworkManager.Instance != null)
     {
-        // false porque aquí la conexión SÍ está viva y queremos avisar educadamente a UGS
         await SessionNetworkManager.Instance.AbandonarSala(false);
-        
-        // Esperamos a que los sockets se liberen antes de cambiar de escena
         await System.Threading.Tasks.Task.Delay(500);
     }
 
@@ -218,5 +282,22 @@ public async void QuitGame()
         InteractionManager.Instance.isPaused = isPaused;
         InteractionManager.Instance.UpdateVisualStates();
         Time.timeScale = isPaused ? 0f : 1f;
+    }
+
+    /// <summary>
+    /// Recopila los nombres de todos los jugadores para guardarlos en el historial.
+    /// </summary>
+    private List<string> ObtenerNombresParaHistorial()
+    {
+        List<string> nombres = new List<string>();
+        if (InteractionManager.Instance != null)
+        {
+            for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
+            {
+                string nombre = InteractionManager.Instance.GetPlayerName(i);
+                nombres.Add(nombre);
+            }
+        }
+        return nombres;
     }
 }

@@ -13,6 +13,10 @@ public class MenuManager : MonoBehaviour
     
     [Header("2. Perfil & Stats")]
     public GameObject panelProfile;
+
+    [Header("Panel de Bienvenida (primera vez)")]
+    [Tooltip("Arrastra aquí el GameObject del WelcomePanel. Se activa si no hay Nickname.")]
+    public GameObject welcomePanel;
     
     [Header("3. Tienda (Shop)")]
     public GameObject panelShop;
@@ -55,16 +59,23 @@ public class MenuManager : MonoBehaviour
         
         if(practicePlayers != null) CalcularPremioPractica();
         if(privatePlayers != null) CalcularPremioPrivada();
+
+        // PERFIL: Si el jugador no tiene nickname, mostrar panel de bienvenida
+        if (!PlayerPrefs.HasKey("Nickname") && welcomePanel != null)
+        {
+            welcomePanel.SetActive(true);
+        }
     }
 
     // --- MÁQUINA DE ESTADOS ---
 
     public void MostrarHub() 
     { 
+        GameConfig.gameStarted = false;
         ApagarTodosLosPaneles(); 
         if(panelHub != null) panelHub.SetActive(true); 
-        pToolBar.SetActive(true);
-        bBack.gameObject.SetActive(true);
+        if(pToolBar != null) pToolBar.SetActive(true);
+        if(bBack != null) bBack.gameObject.SetActive(true);
         
         // Disparamos la limpieza global de la UI Privada
         if (_cachedMenuLobbyUI == null) _cachedMenuLobbyUI = Object.FindFirstObjectByType<MenuLobbyUI>();
@@ -76,20 +87,20 @@ public class MenuManager : MonoBehaviour
     public void MostrarPerfil() { ApagarTodosLosPaneles(); if(panelProfile != null) panelProfile.SetActive(true); }
     public void MostrarTienda() { ApagarTodosLosPaneles(); if(panelShop != null) panelShop.SetActive(true); }
 
-    public void IniciarFlujoPractica() { ApagarTodosLosPaneles(); if(panelPractice != null) panelPractice.SetActive(true); }
-    public void IniciarFlujoPublico() { ApagarTodosLosPaneles(); if(panelMatchmakingLobby != null) panelMatchmakingLobby.SetActive(true); bBack.gameObject.SetActive(false); }
+    public void IniciarFlujoPractica() { GameConfig.currentMatchMode = "practice"; ApagarTodosLosPaneles(); if(panelPractice != null) panelPractice.SetActive(true); }
+    public void IniciarFlujoPublico() { GameConfig.currentMatchMode = "public"; ApagarTodosLosPaneles(); if(panelMatchmakingLobby != null) panelMatchmakingLobby.SetActive(true); if(bBack != null) bBack.gameObject.SetActive(false); if(pToolBar != null) pToolBar.SetActive(false); }
     
     // Al pulsar "Private" en el Hub, venimos aquí:
-    public void IniciarFlujoPrivado() { ApagarTodosLosPaneles(); if(panelPrivateChoice != null) panelPrivateChoice.SetActive(true); }
+    public void IniciarFlujoPrivado() { GameConfig.currentMatchMode = "private"; ApagarTodosLosPaneles(); if(panelPrivateChoice != null) panelPrivateChoice.SetActive(true); }
 
     // Al pulsar "Join" en pPrivate, venimos aquí:
     public void MostrarPrivateJoin() { ApagarTodosLosPaneles(); if(panelPrivateJoin != null) panelPrivateJoin.SetActive(true); }
     
     // Al pulsar "Create" (tras cargar la red), venimos aquí:
-    public void MostrarPrivateLobby() { ApagarTodosLosPaneles(); if(panelPrivateLobby != null) panelPrivateLobby.SetActive(true); }
+    public void MostrarPrivateLobby() { ApagarTodosLosPaneles(); if(panelPrivateLobby != null) panelPrivateLobby.SetActive(true); if(bBack != null) bBack.gameObject.SetActive(false); if(pToolBar != null) pToolBar.SetActive(false); }
     
     // Al pulsar "Join" (tras buscar el código), venimos aquí:
-    public void MostrarClientLobby() { ApagarTodosLosPaneles(); if(panelClientLobby != null) panelClientLobby.SetActive(true); } 
+    public void MostrarClientLobby() { ApagarTodosLosPaneles(); if(panelClientLobby != null) panelClientLobby.SetActive(true); if(bBack != null) bBack.gameObject.SetActive(false); if(pToolBar != null) pToolBar.SetActive(false); } 
 
     private void ApagarTodosLosPaneles()
     {

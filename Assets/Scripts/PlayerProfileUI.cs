@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.UI;
 using TMPro;
 
 public class PlayerProfileUI : MonoBehaviour
@@ -8,8 +9,11 @@ public class PlayerProfileUI : MonoBehaviour
     public TextMeshProUGUI livesText;
     public TextMeshProUGUI statsText;
 
+    [Header("Avatar")]
+    public Image imgAvatar;
+
    
-    public void ActualizarPerfil(string nombre, int vidas, int bazasGanadas, int apuestaActual)
+    public void ActualizarPerfil(string nombre, int vidas, int bazasGanadas, int apuestaActual, Sprite avatar = null)
     {
         // 1. Actualiza el nombre
         if (nameText != null) nameText.text = nombre;
@@ -28,6 +32,12 @@ public class PlayerProfileUI : MonoBehaviour
         {
             string textoApuesta = (apuestaActual >= 0) ? apuestaActual.ToString() : "-";
             statsText.text = $"Bazas: <b>{bazasGanadas}</b> / Apuesta: <b>{textoApuesta}</b>";
+        }
+
+        // 4. Avatar (solo se actualiza si se pasa uno nuevo)
+        if (avatar != null && imgAvatar != null)
+        {
+            imgAvatar.sprite = avatar;
         }
     }
 }
