@@ -50,6 +50,9 @@ public class SessionNetworkManager : MonoBehaviour
 
                 // ANALÍTICAS: Iniciar recolección tras autenticar
                 if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.IniciarRecoleccion();
+
+                // TEST A/B: Descargar configuración remota (estrategia de anuncios)
+                if (RemoteConfigManager.Instance != null) await RemoteConfigManager.Instance.FetchConfigs();
             }
         }
         catch (System.Exception e) { Debug.LogError($"Error grave al arrancar UGS: {e.Message}"); }

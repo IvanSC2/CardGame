@@ -190,6 +190,22 @@ public class PauseManager : NetworkBehaviour
             AnalyticsManager.Instance.EventoMatchCompleted(puesto, duracion, dineroAnalytics, GameConfig.currentMatchMode);
         }
 
+        // TEST A/B: Lógica de Fricción Publicitaria
+        if (AdManager.Instance != null && RemoteConfigManager.Instance != null)
+        {
+            string estrategia = RemoteConfigManager.Instance.adStrategy;
+            if (estrategia == "aggressive") 
+            {
+                // Grupo A: Anuncio SIEMPRE (ganes o pierdas)
+                AdManager.Instance.MostrarAnuncioIntersticial();
+            } 
+            else if (estrategia == "punitive" && puesto > 1) 
+            {
+                // Grupo B: Anuncio SOLO si has perdido (puesto 2, 3 o 4)
+                AdManager.Instance.MostrarAnuncioIntersticial();
+            }
+        }
+
         // 5. Congelamos el tiempo SOLO si ya no quedan humanos
         if (otrosHumanosVivos == 0)
         {
@@ -260,6 +276,13 @@ public async void QuitGame()
             TopBarUI.Instance.ActualizarMonedas(GameConfig.currentFee);
             dineroHistorial = 0; // En el historial aparece 0
             Debug.Log($"[ECONOMÍA] Matchmaking público: reembolso de {GameConfig.currentFee} monedas.");
+
+            // PENALIZACIÓN ADICIONAL: Si el que se va de la pública es el Host, se traga un anuncio sí o sí
+            if (GameConfig.isHostLobby && AdManager.Instance != null)
+            {
+                Debug.Log("[CASTIGO] El Host ha abandonado la partida pública. Mostrando anuncio de castigo...");
+                AdManager.Instance.MostrarAnuncioIntersticial();
+            }
         }
 
         // Registrar en el historial como "Abandonada"
