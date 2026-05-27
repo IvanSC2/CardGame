@@ -83,16 +83,29 @@ public class MenuLobbyUI : MonoBehaviour
                 var session = SessionNetworkManager.Instance?.currentSession;
                 if (session != null)
                 {
+                    int jugadoresConectadosUGS = session.Players.Count;
+
+                    // Mínimo 2 jugadores para partida privada
+                    if (jugadoresConectadosUGS < 2)
+                    {
+                        if (MenuManager.Instance != null)
+                            MenuManager.Instance.MostrarPopupInfo("Necesitas al menos 2 jugadores para iniciar una partida privada.\n\nEspera a que alguien se una con el código.");
+                        return;
+                    }
+
                     // FUNCIONALIDAD PRIVADA: Rellenar con bots.
                     // Si configuraste 6 pero sois 4, nPlayers = 6. 
                     // El InteractionManager creará 6 asientos y 2 de ellos (sin clientId) serán bots.
                     GameConfig.nPlayers = session.MaxPlayers;
-                    int jugadoresConectadosUGS = session.Players.Count;
+
                     GameConfig.nHumanPlayers = jugadoresConectadosUGS;
                     
                     // MONETIZACIÓN: Configuramos la partida para que al cargar la escena se cobren las monedas
-                    GameConfig.currentFee = int.Parse(MenuManager.Instance.privateEntryFee.opciones[MenuManager.Instance.privateEntryFee.ObtenerIndice()]);
-                    GameConfig.currentPrize = MenuManager.Instance.ObtenerPremioPrivadaCalculado();
+                    int feeElegido = int.Parse(MenuManager.Instance.privateEntryFee.opciones[MenuManager.Instance.privateEntryFee.ObtenerIndice()]);
+                    GameConfig.currentFee = feeElegido;
+                    // PREMIO JUSTO: Solo se suma el dinero de los jugadores humanos que aportan a la partida.
+                    GameConfig.currentPrize = feeElegido * GameConfig.nHumanPlayers;
+                    
                     GameConfig.isPrivateMatch = true;
                     GameConfig.isHostLobby = true;
                     GameConfig.prizeAwarded = false;
@@ -202,7 +215,7 @@ public class MenuLobbyUI : MonoBehaviour
         if (conectadosNube != _lastConectadosNube || forceRefresh)
         {
             _lastConectadosNube = conectadosNube;
-            int premioActual = CalcularPremioDinamico(conectadosNube, maxJugadores);
+            int premioActual = CalcularPremioDinamico(conectadosNube, maxJugadores, session.IsPrivate);
             string textoPremio = $"{premioActual} $";
 
             if (txtPremioLobbyHost != null) txtPremioLobbyHost.text = textoPremio;
@@ -216,9 +229,9 @@ public class MenuLobbyUI : MonoBehaviour
             if (txtJugadoresMatchmaking != null) txtJugadoresMatchmaking.text = textoContador;
 
             string listaPrivada = "";
-            string miNombre = (ProfileManager.Instance != null && ProfileManager.Instance.TieneNickname())
+            string miNombre = (ProfileManager.Instance != null)
                 ? ProfileManager.Instance.GetDisplayName()
-                : "TÚ";
+                : "Invitado";
 
             // Buscamos en qué índice está el jugador local dentro de la lista de jugadores de UGS
             var playersList = session.Players; // IReadOnlyList<IReadOnlyPlayer>
@@ -241,7 +254,7 @@ public class MenuLobbyUI : MonoBehaviour
                 bool esHostSlot = (i == 0);
                 
                 string idUgsActual = playersList[i].Id;
-                string nombreJugador = $"Invitado {i}";
+                string nombreJugador = "(Conectando...)";
 
                 if (esMiSlot) 
                 {
@@ -352,12 +365,9 @@ public class MenuLobbyUI : MonoBehaviour
 
         if (TopBarUI.Instance != null && !TopBarUI.Instance.TieneSuficientes(entryFee))
         {
-            Debug.LogWarning("<color=red>FONDOS INSUFICIENTES:</color> No puedes crear esta sala.");
-            
-           
-            if (txtPrecioLobbyHost != null) txtPrecioLobbyHost.text = "<color=red>SIN DINERO</color>";
-            
-            return; // CORTAMOS EL CÓDIGO AQUÍ. No hay dinero, no hay sala.
+            if (MenuManager.Instance != null)
+                MenuManager.Instance.MostrarPopupInfo($"No tienes monedas suficientes para crear esta sala.\n\nNecesitas {entryFee} \u2660.", esErrorDinero: true);
+            return;
         }
         procesandoPeticionRed = true;
 
@@ -369,6 +379,8 @@ public class MenuLobbyUI : MonoBehaviour
         
         pToolBar.SetActive(false);
         bBack.gameObject.SetActive(false);
+
+        LoadingManager.Instance?.MostrarCargando("Creando sala...");
 
         int maxJugadores = MenuManager.Instance.privatePlayers.ObtenerIndice() + 2;
         //int entryFee = int.Parse(MenuManager.Instance.privateEntryFee.opciones[MenuManager.Instance.privateEntryFee.ObtenerIndice()]);
@@ -384,6 +396,8 @@ public class MenuLobbyUI : MonoBehaviour
 
         // Llamada pesada a la nube
         string codigo = await SessionNetworkManager.Instance.CrearSalaPrivada(maxJugadores, entryFee, prizeTotal, difficulty, turnTime);
+
+        LoadingManager.Instance?.OcultarCargando();
 
         if (!string.IsNullOrEmpty(codigo))
         {
@@ -443,9 +457,10 @@ public class MenuLobbyUI : MonoBehaviour
             }
             else
             {
-                if (txtDetalleFee != null) txtDetalleFee.text = "<color=red>¡DINERO INSUFICIENTE!</color>";
                 btnSearch.interactable = true;
                 await SessionNetworkManager.Instance.AbandonarSala();
+                if (MenuManager.Instance != null)
+                    MenuManager.Instance.MostrarPopupInfo($"No tienes monedas suficientes para unirte a esta sala.\n\nNecesitas {feeSalaActual} \u2660.", esErrorDinero: true);
             }
         }
         else
@@ -466,7 +481,7 @@ public class MenuLobbyUI : MonoBehaviour
     {
         btnJoin.interactable = false;
         bBack.gameObject.SetActive(false);
-
+        LoadingManager.Instance?.MostrarCargando("Uniéndose...");
         
         string codigo = inputCodigoAmigo.text.Trim().ToUpper();
 
@@ -493,29 +508,39 @@ public class MenuLobbyUI : MonoBehaviour
         {
             btnJoin.interactable = true;
             bBack.gameObject.SetActive(true);
-            Debug.LogError("Error al intentar unirse definitivamente a la sala.");
+            if (MenuManager.Instance != null)
+                MenuManager.Instance.MostrarPopupInfo("No se pudo unir a la sala. El código puede ser incorrecto o la sala ya empezó.");
         }
+        LoadingManager.Instance?.OcultarCargando();
     }
-    public int CalcularPremioDinamico(int conectados, int maximo)
-{
-    // 1. Obtenemos el Fee (Cuota) que configuró el Host
-    
-    string textoFee = MenuManager.Instance.privateEntryFee.opciones[MenuManager.Instance.privateEntryFee.ObtenerIndice()];
-    int entryFee = int.Parse(textoFee);
+    public int CalcularPremioDinamico(int conectados, int maximo, bool isPrivate)
+    {
+        // 1. Obtenemos el Fee (Cuota)
+        int entryFee = 200; // Por defecto el de públicas
 
-    // 2. Cálculo base: Jugadores que han pagado la entrada
-    int premioBase = conectados * entryFee;
+        if (isPrivate)
+        {
+            // Leemos el de privadas solo si es una sala privada
+            string textoFee = MenuManager.Instance.privateEntryFee.opciones[MenuManager.Instance.privateEntryFee.ObtenerIndice()];
+            entryFee = int.Parse(textoFee);
+        }
 
-    // 3. Cálculo de Bots: Cuántos huecos quedan
-    int numBots = maximo - conectados;
-    
-    // 4. Bonus por dificultad (solo si hay bots)
-    // Si la dificultad es "Alta" (índice 2), el bonus es mayor
-    int bonusDificultadIA = MenuManager.Instance.privateDifficulty.ObtenerIndice() * 25; 
-    int premioBots = numBots * bonusDificultadIA;
+        // 2. Cálculo base: Jugadores que han pagado la entrada
+        int premioBase = conectados * entryFee;
 
-    return premioBase + premioBots;
-}
+        // 3. Cálculo de Bots: Cuántos huecos quedan
+        int numBots = maximo - conectados;
+        
+        // 4. Bonus por dificultad (solo si hay bots y es privada)
+        int premioBots = 0;
+        if (isPrivate)
+        {
+            int bonusDificultadIA = MenuManager.Instance.privateDifficulty.ObtenerIndice() * 25; 
+            premioBots = numBots * bonusDificultadIA;
+        }
+
+        return premioBase + premioBots;
+    }
     // =======================================================
     // 4. LIMPIEZA Y ABANDONO
     // =======================================================
@@ -572,6 +597,8 @@ public class MenuLobbyUI : MonoBehaviour
         else
             Debug.Log($"[MATCHMAKING] Handshake completo ({jugadoresEsperados} jugadores). Lanzando MainGame.");
 
+        LoadingManager.Instance?.MostrarCargando("Cargando partida...");
+
         if (NetworkManager.Singleton?.SceneManager != null)
             NetworkManager.Singleton.SceneManager.LoadScene("MainGame", UnityEngine.SceneManagement.LoadSceneMode.Single);
         else
@@ -604,11 +631,16 @@ public void AbandonarLobby()
 
     public void ResetearBuscador()
     {
-        btnSearch.gameObject.SetActive(true);
-        btnSearch.interactable = true;
-        btnJoin.gameObject.SetActive(false);
+        if (btnSearch != null) { btnSearch.gameObject.SetActive(true); btnSearch.interactable = true; }
+        if (btnJoin != null) btnJoin.gameObject.SetActive(false);
         if (panelInfoPartida != null) panelInfoPartida.SetActive(false);
-        inputCodigoAmigo.text = "";
+        if (inputCodigoAmigo != null) inputCodigoAmigo.text = "";
+        // Limpiar también textos de fee/prize del buscador
+        if (txtDetalleFee != null) txtDetalleFee.text = "";
+        if (txtDetallePrize != null) txtDetallePrize.text = "";
+        if (txtDetalleJugadores != null) txtDetalleJugadores.text = "";
+        feeSalaActual = 0;
+        premioSalaActual = 0;
     }
 
     public void ResetearLobbyCompleto()
@@ -617,8 +649,25 @@ public void AbandonarLobby()
         ResetearBuscador();
 
         if (bBack != null) bBack.gameObject.SetActive(true);
+
+        // Host Privado
         if (txtListaNombresHost != null) txtListaNombresHost.text = "";
+        if (txtPremioLobbyHost != null) txtPremioLobbyHost.text = "0 $";
+        if (txtJugadoresHost != null) txtJugadoresHost.text = "0/0";
+
+        // Cliente Privado
         if (txtListaNombresCliente != null) txtListaNombresCliente.text = "";
+        if (txtPremioLobbyCliente != null) txtPremioLobbyCliente.text = "0 $";
+        if (txtJugadoresCliente != null) txtJugadoresCliente.text = "0/0";
+
+        // Matchmaking (Público)
+        if (txtListaNombresMatchmaking != null) txtListaNombresMatchmaking.text = "";
+        if (txtPremioLobbyMatchmaking != null) txtPremioLobbyMatchmaking.text = "0 $";
+        if (txtJugadoresMatchmaking != null) txtJugadoresMatchmaking.text = "0/0";
+
+        // Pre-Lobby (Buscador)
+        if (txtDetallePrize != null) txtDetallePrize.text = "0 $";
+        if (txtDetalleJugadores != null) txtDetalleJugadores.text = "0/0";
 
         if (MenuManager.Instance != null)
         {

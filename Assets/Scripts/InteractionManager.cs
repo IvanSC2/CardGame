@@ -19,6 +19,7 @@ public class InteractionManager : NetworkBehaviour
     [Header("Red")]
     //Se pueden cambiar los persmisos de acceso a la variable
     public NetworkVariable<int> totalJugadoresRed = new NetworkVariable<int>(2, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+    public NetworkVariable<float> turnEndTime = new NetworkVariable<float>(0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
     [Header("UI Feedback")]
     public TextMeshProUGUI infoLineText;
@@ -89,12 +90,14 @@ public class InteractionManager : NetworkBehaviour
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
         GameConfig.gameStarted = true;
+        GameConfig.trophyAwarded = false; // Resetear trofeos para esta partida
+        GameConfig.trophyBote = 0;        // Resetear bote de trofeos
         currentState = GameState.WAITING;
 
         string[] nombresDificultad = { "Pacifico", "Normal", "Difícil", "Experto", "Imposible" };
         int numBots = GameConfig.nPlayers;
         int difIndex = GameConfig.difficulty;
-        SetInfoMessage($"Numero de bots: {numBots}\nDificultad: {nombresDificultad[difIndex]}");
+        SetInfoMessage($"<b>¡EMPIEZA LA PARTIDA!</b>\nRonda 1: {currentRoundCards} Cartas", 5f);
     }
 
     /// <summary>
@@ -102,11 +105,22 @@ public class InteractionManager : NetworkBehaviour
     /// </summary>
     public override void OnNetworkSpawn()
     {
-        // MONETIZACIÓN: Cobro por adelantado  al entrar a la partida
+        // MONETIZACIÓN: Cobro por adelantado al entrar a la partida
         if (GameConfig.currentFee > 0 && !GameConfig.prizeAwarded)
         {
-            TopBarUI.Instance.GastarMonedas(GameConfig.currentFee);
-            Debug.Log($"[ECONOMÍA] Partida arrancada. Fee deducido: {GameConfig.currentFee}");
+            TopBarUI.QueuePendingDelta(0, -GameConfig.currentFee);
+            Debug.Log($"[ECONOMÍA] Partida arrancada. Fee deducido y encolado: -{GameConfig.currentFee}");
+        }
+
+        // ANTI-RAGEQUIT FLAG: Registrar que la partida empezó para castigar cierres por deslizamiento en móvil
+        if (!GameConfig.isPrivateMatch)
+        {
+            PlayerPrefs.SetInt("PartidaEnCurso", 1);
+            int ultimoPuesto = Mathf.Clamp(GameConfig.nPlayers - 1, 0, GameConfig.trophyDeltaByRank.Length - 1);
+            int penalizacionMax = Mathf.Min(0, GameConfig.trophyDeltaByRank[ultimoPuesto]);
+            PlayerPrefs.SetInt("RageQuit_Trophies", penalizacionMax);
+            PlayerPrefs.Save();
+            Debug.Log($"[ANTI-RAGEQUIT] Bandera activada. Posible castigo trofeos: {penalizacionMax}");
         }
 
         if (IsServer)
@@ -190,7 +204,7 @@ public class InteractionManager : NetworkBehaviour
 
         // Enviar mi nombre real al servidor para que lo distribuya
         string miNombre = "Invitado";
-        if (ProfileManager.Instance != null && ProfileManager.Instance.TieneNickname())
+        if (ProfileManager.Instance != null)
             miNombre = ProfileManager.Instance.GetDisplayName();
         
         _playerNames[_mySeatIndex] = miNombre;
@@ -372,7 +386,8 @@ public class InteractionManager : NetworkBehaviour
             DestruirCartasManoClientRpc(playerIndex);
         }
 
-        SetInfoMessage($"El Jugador {playerIndex} se ha desconectado.");
+        string nombreReal = GetPlayerName(playerIndex);
+        SetInfoMessage($"<color=#FF5555><b>{nombreReal}</b></color> se ha desconectado.", 5f);
         SincronizarDesconexionClientRpc(playerIndex);
 
         int jugadoresVivos = 0;
@@ -381,6 +396,8 @@ public class InteractionManager : NetworkBehaviour
         {
             if (vidas[i] > 0) { jugadoresVivos++; posibleGanador = i; }
         }
+        // Si hay más de 1 vivo, no hay ganador todavía
+        if (jugadoresVivos > 1) posibleGanador = -1;
 
         if (jugadoresVivos <= 1)
         {
@@ -410,7 +427,8 @@ public class InteractionManager : NetworkBehaviour
     private void SincronizarDesconexionClientRpc(int idJugadorQueSeFue)
     {
         if (!IsServer) vidas[idJugadorQueSeFue] = 0;
-        SetInfoMessage($"El Jugador {idJugadorQueSeFue} se ha desconectado.");
+        string nombreReal = GetPlayerName(idJugadorQueSeFue);
+        SetInfoMessage($"<color=#FF5555><b>{nombreReal}</b></color> se ha desconectado.", 5f);
         ActualizarTodosLosPerfilesUI();
 
         // Cada cliente comprueba si, al irse este, él se ha quedado solo en la sala
@@ -443,7 +461,7 @@ public class InteractionManager : NetworkBehaviour
         isPaused = true;
 
         if (_mySeatIndex == ganadorIndex)
-            SetInfoMessage("¡TODOS TUS RIVALES HAN ABANDONADO! ¡VICTORIA!");
+            SetInfoMessage("<color=#55FF55><b>¡VICTORIA POR ABANDONO!</b></color> Todos los rivales han huido.", 8f);
 
         if (PauseManager.Instance != null)
         {
@@ -460,6 +478,8 @@ public class InteractionManager : NetworkBehaviour
         // Refresco de nombres y avatares: si los RPCs llegaron antes de generar la mesa,
         // los perfiles se quedaron con "JUGADOR X" y sin avatar. Este refresco los corrige.
         ActualizarTodosLosPerfilesUI();
+
+        LoadingManager.Instance?.OcultarCargando();
     }
 
     private void ArrancarMesaLocal(int numJugadores)
@@ -498,8 +518,29 @@ public class InteractionManager : NetworkBehaviour
                     manoMesaIndex = sorteo;
                     currentTurnIndex = manoMesaIndex;
                     Debug.Log($"🎲 SORTEO: El Asiento {manoMesaIndex} empieza la partida.");
+                    
+                    // Automatización: arrancar la primera ronda
+                    StartCoroutine(StartNewRoundServer());
                 }
             }
+        }
+    }
+
+    public IEnumerator StartNewRoundServer()
+    {
+        if (!IsServer) yield break;
+        
+        Debug.Log("[GAME LOOP] Iniciando nueva ronda. Esperando 3 segundos...");
+        yield return new WaitForSeconds(3.0f);
+        
+        if (HandTester.Instance != null)
+        {
+            Debug.Log("[GAME LOOP] Llamando a DrawNewHand automáticamente.");
+            HandTester.Instance.DrawNewHand();
+        }
+        else
+        {
+            Debug.LogError("[GAME LOOP] HandTester.Instance es NULL!");
         }
     }
 
@@ -551,6 +592,11 @@ public class InteractionManager : NetworkBehaviour
         // Usamos _mySeatIndex (NO LocalClientId) para saber si es nuestro turno
         currentState = (currentTurnIndex == _mySeatIndex) ? GameState.PLAYER_TURN : GameState.WAITING;
 
+        if (currentState == GameState.PLAYER_TURN)
+            SetInfoMessage("<color=#55FF55><b>¡Es tu turno de jugar carta!</b></color>", 5f);
+        else
+            SetInfoMessage($"Turno de <color=#AAAAAA><b>{GetPlayerName(currentTurnIndex)}</b></color>...", 4f);
+
         UpdateVisualStates();
         ClearSelection();
 
@@ -564,6 +610,10 @@ public class InteractionManager : NetworkBehaviour
             {
                 currentState = GameState.AI_TURN;
                 StartCoroutine(AITurnRoutine());
+            }
+            else
+            {
+                StartCoroutine(TurnTimerRoutine(currentTurnIndex));
             }
         }
     }
@@ -607,8 +657,9 @@ public class InteractionManager : NetworkBehaviour
 
         bool canSelectAsHuman = (currentState == GameState.PLAYER_TURN && isMyCard);
         bool canSelectAsAI = (IsServer && currentState == GameState.AI_TURN && card.transform.parent == playerHands[currentTurnIndex].transform);
+        bool canForcePlay = (IsServer && card.transform.parent == playerHands[currentTurnIndex].transform);
 
-        if (canSelectAsHuman || canSelectAsAI)
+        if (canSelectAsHuman || canSelectAsAI || canForcePlay)
         {
             if (SelectedCard == card) { ClearSelection(); return; }
             if (SelectedCard != null) SelectedCard.GetComponent<UnityEngine.UI.Image>().color = Color.white;
@@ -657,8 +708,15 @@ public class InteractionManager : NetworkBehaviour
     // ========================================================================
     IEnumerator AITurnRoutine()
     {
+        // El reloj de turno se oculta/pausa para los humanos mientras juega el bot
+        turnEndTime.Value = 0f;
+        
         Debug.Log($"🤖 IA {currentTurnIndex}: Pensando jugada...");
-        yield return new WaitForSeconds(1.5f);
+        
+        float[] aiDelays = { 3.5f, 2.5f, 2.0f, 1.5f, 1.0f, 0.5f, 0.2f };
+        int diff = Mathf.Clamp(GameConfig.difficulty, 0, 6);
+        yield return new WaitForSeconds(aiDelays[diff]);
+
 
         List<Card> cardsOnTable = new List<Card>();
         if (TableZone.Instance != null)
@@ -685,11 +743,39 @@ public class InteractionManager : NetworkBehaviour
         if (cardToPlay != null)
         {
             Debug.Log($"🤖 IA {currentTurnIndex}: Juega {cardToPlay.cardData.rank} de {cardToPlay.cardData.suit}");
-            cardToPlay.SetFaceUp(true);
             SelectCard(cardToPlay);
-
-            yield return new WaitForSeconds(0.5f);
             TableZone.Instance.OnPointerClick(null);
+        }
+    }
+
+    IEnumerator TurnTimerRoutine(int playerIndex)
+    {
+        float timeLimit = GameConfig.turnTime > 0 ? GameConfig.turnTime : 15f;
+        turnEndTime.Value = (float)NetworkManager.Singleton.ServerTime.Time + timeLimit;
+
+        while (currentTurnIndex == playerIndex && !isPaused)
+        {
+            if ((float)NetworkManager.Singleton.ServerTime.Time >= turnEndTime.Value)
+            {
+                Debug.LogWarning($"[TIMEOUT] El jugador {playerIndex} ha tardado demasiado. Forzando jugada.");
+                
+                List<UICard> hand = new List<UICard>();
+                foreach (Transform t in playerHands[playerIndex].transform)
+                {
+                    UICard c = t.GetComponent<UICard>();
+                    if (c != null) hand.Add(c);
+                }
+
+                if (hand.Count > 0)
+                {
+                    UICard cardToPlay = hand[0];
+                    SelectCard(cardToPlay);
+                    TableZone.Instance.OnPointerClick(null);
+                }
+                
+                break;
+            }
+            yield return null;
         }
     }
 
@@ -761,7 +847,7 @@ public class InteractionManager : NetworkBehaviour
     [Rpc(SendTo.Everyone)]
     private void RevelarCartasCiegasClientRpc()
     {
-        SetInfoMessage("¡RESOLVIENDO RONDA CIEGA!");
+        SetInfoMessage("<b>¡RONDA CIEGA A LA VISTA!</b>", 4f);
         foreach (CanvasGroup hand in playerHands)
         {
             if (hand.transform.childCount > 0)
@@ -777,8 +863,10 @@ public class InteractionManager : NetworkBehaviour
     {
         bazasGanadas[winnerIndex] = totalBazasDelGanador;
 
-        if (winnerIndex == _mySeatIndex) SetInfoMessage("¡TÚ TIENES LA CARTA MÁS ALTA!");
-        else SetInfoMessage($"¡EL JUGADOR {winnerIndex} TIENE LA CARTA MÁS ALTA!");
+        if (winnerIndex == _mySeatIndex) 
+            SetInfoMessage("<color=#55FF55><b>¡Tu carta es la más alta de la mesa!</b></color>", 5f);
+        else 
+            SetInfoMessage($"<color=#AAAAAA><b>{GetPlayerName(winnerIndex)}</b></color> tiene la carta más alta.", 5f);
 
         ActualizarTodosLosPerfilesUI();
     }
@@ -799,10 +887,27 @@ public class InteractionManager : NetworkBehaviour
             }
         }
     }
+    private Coroutine _infoMessageCoroutine;
 
-    public void SetInfoMessage(string message)
+    public void SetInfoMessage(string message, float duration = 4f)
     {
-        if (infoLineText != null) infoLineText.text = message;
+        if (infoLineText != null)
+        {
+            infoLineText.text = message;
+            if (_infoMessageCoroutine != null) StopCoroutine(_infoMessageCoroutine);
+            
+            // Si el mensaje está vacío, no lanzamos corrutina (se queda borrado)
+            if (!string.IsNullOrEmpty(message))
+            {
+                _infoMessageCoroutine = StartCoroutine(ClearInfoMessageAfter(duration));
+            }
+        }
+    }
+
+    private IEnumerator ClearInfoMessageAfter(float duration)
+    {
+        yield return new WaitForSeconds(duration);
+        if (infoLineText != null) infoLineText.text = "";
     }
 
     public void RefreshHandVisibility()

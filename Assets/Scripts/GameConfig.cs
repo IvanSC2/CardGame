@@ -24,7 +24,20 @@ public static class GameConfig
     // Valores: "practice", "private", "public"
     public static string currentMatchMode = "practice";
     public static bool gameStarted = false;
+    
+    // TIEMPOS DE TURNO
+    public static float turnTime = 15f;
 
     // ANALÍTICAS: Hora de inicio de la partida para medir duración
     public static float matchStartTime = 0f;
+    // TROFEOS (Solo para partidas de MatchMaking público)
+    public static bool trophyAwarded = false;
+    // Bote de trofeos acumulados de los jugadores que han muerto/abandonado
+    // Se repartirá entre los supervivientes si el Host abandona
+    public static int trophyBote = 0;
+
+    // Trofeos que se ganan/pierden por posición en Matchmaking [1º, 2º, 3º, 4º/últimos]
+    // Si hay menos jugadores, se usan los índices desde el final del array
+    // Ej. en partida de 2: 1º -> +30, 2º -> -20
+    public static readonly int[] trophyDeltaByRank = { 30, 10, -10, -20, -25, -28 };
 }

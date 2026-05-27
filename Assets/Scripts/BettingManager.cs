@@ -111,6 +111,11 @@ public class BettingManager : NetworkBehaviour
         {
             StartCoroutine(AIBetRoutine(currentBetterIndex, isLastToBet, forbiddenBet));
         }
+        else
+        {
+            // Arrancar el temporizador para el humano
+            StartCoroutine(BettingTimerRoutine(currentBetterIndex, forbiddenBet));
+        }
     }
 
     // ========================================================================
@@ -205,8 +210,16 @@ public class BettingManager : NetworkBehaviour
         // Todos los ordenadores actualizan sus datos y perfiles visuales
         InteractionManager.Instance.apuestas[playerIndex] = amount;
         
-        string nombre = (playerIndex == InteractionManager.Instance.MySeatIndex) ? "TÚ" : $"JUGADOR {playerIndex}";
-        InteractionManager.Instance.SetInfoMessage($"{nombre} APUESTA: {amount}");
+        string nombreReal = InteractionManager.Instance.GetPlayerName(playerIndex);
+        if (playerIndex == InteractionManager.Instance.MySeatIndex)
+        {
+            InteractionManager.Instance.SetInfoMessage($"Has apostado a ganar <color=#FFDD00><b>{amount} bazas</b></color>.", 4f);
+        }
+        else
+        {
+            InteractionManager.Instance.SetInfoMessage($"<color=#FFDD00><b>{nombreReal}</b></color> apuesta a ganar <color=#FFDD00><b>{amount} bazas</b></color>.", 4f);
+        }
+
         InteractionManager.Instance.ActualizarTodosLosPerfilesUI();
     }
 
@@ -256,9 +269,42 @@ private void EnviarApuestaServerRpc(int amount, RpcParams rpcParams = default) /
     // ========================================================================
     // 5. RUTINAS DEL SERVIDOR (IA y Cierre)
     // ========================================================================
+    IEnumerator BettingTimerRoutine(int playerIndex, int forbiddenBet)
+    {
+        float timeLimit = GameConfig.turnTime > 0 ? GameConfig.turnTime : 15f;
+        InteractionManager.Instance.turnEndTime.Value = (float)NetworkManager.Singleton.ServerTime.Time + timeLimit;
+
+        float[] aiDelays = { 3.5f, 2.5f, 2.0f, 1.5f, 1.0f, 0.5f, 0.2f };
+        int diff = Mathf.Clamp(GameConfig.difficulty, 0, 6);
+        yield return new WaitForSeconds(aiDelays[diff]);
+
+        while (currentBetterIndex == playerIndex)
+        {
+            if ((float)NetworkManager.Singleton.ServerTime.Time >= InteractionManager.Instance.turnEndTime.Value)
+            {
+                Debug.LogWarning($"[TIMEOUT] El jugador {playerIndex} ha tardado demasiado en apostar. Forzando apuesta.");
+                
+                int forcedBet = 0;
+                if (forcedBet == forbiddenBet) forcedBet = 1;
+
+                RegistrarApuestaClientRpc(playerIndex, forcedBet);
+                betsPlaced++;
+                currentBetterIndex = (currentBetterIndex + 1) % InteractionManager.Instance.totalPlayers;
+                ProcessNextBetServer();
+                break;
+            }
+            yield return null;
+        }
+    }
+
     IEnumerator AIBetRoutine(int botIndex, bool isLast, int forbiddenBet)
     {
-        yield return new WaitForSeconds(1.5f); //  Pausa para que no sea instantaneo
+        // El reloj de turno se oculta/pausa para los humanos mientras piensa el bot
+        InteractionManager.Instance.turnEndTime.Value = 0f;
+        
+        float[] aiDelays = { 3.0f, 2.0f, 1.5f, 1.0f, 0.5f };
+        int diff = Mathf.Clamp(GameConfig.difficulty, 0, 4);
+        yield return new WaitForSeconds(aiDelays[diff]);
 
         int sumBets = 0;
         for(int i = 0; i < InteractionManager.Instance.totalPlayers; i++) 

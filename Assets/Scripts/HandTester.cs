@@ -5,6 +5,8 @@ using Unity.Netcode;
 
 public class HandTester : NetworkBehaviour
 {
+    public static HandTester Instance;
+
     [Header("Configuración")]
     public GameObject cardPrefab;
     public Button drawHandButton;
@@ -13,6 +15,12 @@ public class HandTester : NetworkBehaviour
     [Header("Contenedores")]
     public Transform handArea;    
     public Transform fullHandArea; 
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    } 
 
     void Start()
     {
@@ -59,8 +67,8 @@ public class HandTester : NetworkBehaviour
 
         if(CardDatabase.deck == null || CardDatabase.deck.Count < totalCartasNecesarias)
         {
-            Debug.LogWarning($"⚠️ No quedan cartas. Necesitas {totalCartasNecesarias} pero hay {CardDatabase.deck?.Count}");
-            return;
+            Debug.Log($"⚠️ No quedan cartas suficientes (necesitas {totalCartasNecesarias}, hay {CardDatabase.deck?.Count}). Creando y barajando mazo nuevo...");
+            CardDatabase.GenerateDeck();
         }
 
         // --- 3. REPARTIMOS SOLO A LOS VIVOS ---

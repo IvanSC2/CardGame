@@ -28,6 +28,24 @@ public class WelcomePanel : MonoBehaviour
     [Tooltip("Panel raíz del overlay (se desactiva al confirmar).")]
     public GameObject panelRoot;
 
+    [Header("UI Recuperación de Cuenta")]
+    [Tooltip("Contenedor visual del campo de Nombre (para ocultarlo en Login).")]
+    public GameObject containerGuest;
+    [Tooltip("Contenedor visual de los campos Email y Password (para ocultarlos en Invitado).")]
+    public GameObject containerLogin;
+    [Tooltip("Campo de texto para el Email de recuperación.")]
+    public TMP_InputField inputEmail;
+    [Tooltip("Campo de texto para la contraseña de recuperación.")]
+    public TMP_InputField inputPassword;
+    [Tooltip("Botón para alternar entre Crear Invitado y Recuperar Cuenta.")]
+    public Button btnToggleMode;
+    [Tooltip("Texto del botón toggle.")]
+    public TMP_Text txtToggleMode;
+    [Tooltip("Texto del botón de confirmación.")]
+    public TMP_Text txtConfirmBtn;
+
+    private bool isLoginMode = false;
+
     [Header("Configuración")]
     [Tooltip("Mínimo de caracteres para el nombre.")]
     public int minLength = 3;
@@ -62,6 +80,21 @@ public class WelcomePanel : MonoBehaviour
 
         if (txtFeedback != null) txtFeedback.text = "";
 
+        // Configurar Toggle Mode
+        if (btnToggleMode != null)
+        {
+            btnToggleMode.onClick.RemoveAllListeners();
+            btnToggleMode.onClick.AddListener(ToggleMode);
+        }
+
+        // Suscribirse a cambios en los inputs de login para validar el botón
+        if (inputEmail != null) inputEmail.onValueChanged.AddListener((_) => ValidarFormulario());
+        if (inputPassword != null) inputPassword.onValueChanged.AddListener((_) => ValidarFormulario());
+
+        // Asegurarnos de que arrancamos en modo Invitado
+        isLoginMode = false;
+        ActualizarVistaModo();
+
         // Fade-in suave
         if (canvasGroup != null)
         {
@@ -79,21 +112,38 @@ public class WelcomePanel : MonoBehaviour
     // =====================================================================
     // VALIDACIÓN EN TIEMPO REAL
     // =====================================================================
+    private void ValidarFormulario()
+    {
+        if (isLoginMode)
+        {
+            // Unity UGS usa Username, no Email, por lo que quitamos la obligación del '@'
+            bool hasUsername = inputEmail != null && inputEmail.text.Trim().Length >= 3;
+            bool hasPassword = inputPassword != null && inputPassword.text.Length >= 8;
+            if (btnConfirm != null) btnConfirm.interactable = hasUsername && hasPassword;
+            if (txtFeedback != null) txtFeedback.text = ""; // Limpiamos feedback en modo login
+        }
+        else
+        {
+            string text = inputNickname != null ? inputNickname.text : "";
+            string trimmed = text.Trim();
+            string error = ValidarNombre(trimmed);
+
+            if (txtFeedback != null)
+            {
+                txtFeedback.text = error;
+                txtFeedback.color = string.IsNullOrEmpty(error) ? Color.green : Color.red;
+                if (string.IsNullOrEmpty(error) && trimmed.Length >= minLength)
+                    txtFeedback.text = "✓ Nombre válido";
+            }
+
+            if (btnConfirm != null)
+                btnConfirm.interactable = string.IsNullOrEmpty(error) && trimmed.Length >= minLength;
+        }
+    }
+
     private void OnInputChanged(string text)
     {
-        string trimmed = text.Trim();
-        string error = ValidarNombre(trimmed);
-
-        if (txtFeedback != null)
-        {
-            txtFeedback.text = error;
-            txtFeedback.color = string.IsNullOrEmpty(error) ? Color.green : Color.red;
-            if (string.IsNullOrEmpty(error) && trimmed.Length >= minLength)
-                txtFeedback.text = "✓ Nombre válido";
-        }
-
-        if (btnConfirm != null)
-            btnConfirm.interactable = string.IsNullOrEmpty(error) && trimmed.Length >= minLength;
+        if (!isLoginMode) ValidarFormulario();
     }
 
     private string ValidarNombre(string nombre)
@@ -125,46 +175,97 @@ public class WelcomePanel : MonoBehaviour
         if (isProcessing) return;
         isProcessing = true;
 
-        string nombre = inputNickname.text.Trim();
-
-        // Validación final por seguridad
-        string error = ValidarNombre(nombre);
-        if (!string.IsNullOrEmpty(error))
-        {
-            if (txtFeedback != null) txtFeedback.text = error;
-            isProcessing = false;
-            return;
-        }
-
-        // Feedback visual mientras guardamos
         if (btnConfirm != null) btnConfirm.interactable = false;
-        if (txtFeedback != null)
+        
+        if (isLoginMode)
         {
-            txtFeedback.text = "Guardando...";
-            txtFeedback.color = Color.yellow;
-        }
+            string email = inputEmail.text.Trim();
+            string password = inputPassword.text;
 
-        // Guardar en ProfileManager → CloudSave + PlayerPrefs
-        if (ProfileManager.Instance != null)
-        {
-            await ProfileManager.Instance.EstablecerNickname(nombre);
+            if (txtFeedback != null)
+            {
+                txtFeedback.text = "Recuperando cuenta...";
+                txtFeedback.color = Color.yellow;
+            }
+
+            if (ProfileManager.Instance != null)
+            {
+                string error = await ProfileManager.Instance.LoginCuenta(email, password);
+                if (error == null)
+                {
+                    Debug.Log($"[BIENVENIDA] Cuenta recuperada con éxito");
+                    StartFade(0f, 0.3f, () => { if (panelRoot != null) panelRoot.SetActive(false); });
+                }
+                else
+                {
+                    if (txtFeedback != null) { txtFeedback.text = "Fallo: " + error; txtFeedback.color = Color.red; }
+                }
+            }
         }
         else
         {
-            // Fallback por si ProfileManager no existe (no debería pasar)
-            PlayerPrefs.SetString("Nickname", nombre);
-            PlayerPrefs.Save();
+            string nombre = inputNickname.text.Trim();
+
+            // Validación final por seguridad
+            string error = ValidarNombre(nombre);
+            if (!string.IsNullOrEmpty(error))
+            {
+                if (txtFeedback != null) txtFeedback.text = error;
+                isProcessing = false;
+                return;
+            }
+
+            if (txtFeedback != null)
+            {
+                txtFeedback.text = "Guardando...";
+                txtFeedback.color = Color.yellow;
+            }
+
+            // Guardar en ProfileManager → CloudSave + PlayerPrefs
+            if (ProfileManager.Instance != null)
+            {
+                await ProfileManager.Instance.EstablecerNickname(nombre);
+            }
+            else
+            {
+                // Fallback por si ProfileManager no existe (no debería pasar)
+                PlayerPrefs.SetString("Nickname", nombre);
+                PlayerPrefs.Save();
+            }
+
+            Debug.Log($"[BIENVENIDA] Nombre registrado: \"{nombre}\"");
+
+            // Fade-out y cerrar
+            StartFade(0f, 0.3f, () =>
+            {
+                if (panelRoot != null) panelRoot.SetActive(false);
+            });
         }
 
-        Debug.Log($"[BIENVENIDA] Nombre registrado: \"{nombre}\"");
-
-        // Fade-out y cerrar
-        StartFade(0f, 0.3f, () =>
-        {
-            if (panelRoot != null) panelRoot.SetActive(false);
-        });
-
         isProcessing = false;
+    }
+
+    private void ToggleMode()
+    {
+        isLoginMode = !isLoginMode;
+        ActualizarVistaModo();
+    }
+
+    private void ActualizarVistaModo()
+    {
+        if (containerGuest != null) containerGuest.SetActive(!isLoginMode);
+        if (containerLogin != null) containerLogin.SetActive(isLoginMode);
+
+        if (txtToggleMode != null)
+            txtToggleMode.text = isLoginMode ? "¿No tienes cuenta? Juega como Invitado" : "Ya tengo cuenta (Recuperar)";
+            
+        if (txtConfirmBtn != null)
+            txtConfirmBtn.text = isLoginMode ? "Iniciar Sesión" : "Comenzar Aventura";
+
+        if (txtFeedback != null) txtFeedback.text = "";
+
+        // Revalidar el formulario según el modo activo
+        ValidarFormulario();
     }
 
     private void StartFade(float targetAlpha, float duration, System.Action onComplete = null)

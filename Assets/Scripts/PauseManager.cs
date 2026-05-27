@@ -131,23 +131,39 @@ public class PauseManager : NetworkBehaviour
             statsText.alignment = TextAlignmentOptions.Center;
         }
 
-        // MONETIZACIÓN: Reparto de premios al finalizar
+        // MONETIZACIÓN Y TROFEOS: Solo en partidas públicas de MatchMaking
+        // Usamos QueuePendingDelta para ser seguros aunque TopBarUI no exista en esta escena.
         if (!GameConfig.prizeAwarded && GameConfig.currentFee > 0)
         {
-            if (puesto == 1) // Ganador absoluto
+            int monedaDelta = 0;
+            if (puesto == 1)
             {
-                TopBarUI.Instance.ActualizarMonedas(GameConfig.currentPrize);
+                monedaDelta += GameConfig.currentPrize;
                 Debug.Log($"[ECONOMÍA] ¡Has ganado! Recibes {GameConfig.currentPrize} monedas.");
             }
-            
-            // Bono por hostear partida pública hasta el final
             if (!GameConfig.isPrivateMatch && GameConfig.isHostLobby)
             {
-                TopBarUI.Instance.ActualizarMonedas(50);
+                monedaDelta += 50;
                 Debug.Log("[ECONOMÍA] Bono de 50 monedas por mantener el servidor público vivo.");
             }
-            
+            if (monedaDelta != 0) TopBarUI.QueuePendingDelta(0, monedaDelta);
             GameConfig.prizeAwarded = true;
+        }
+
+        // TROFEOS: Solo se aplica en partidas públicas de MatchMaking
+        if (!GameConfig.trophyAwarded && GameConfig.currentMatchMode == "public")
+        {
+            int indice = Mathf.Clamp(puesto - 1, 0, GameConfig.trophyDeltaByRank.Length - 1);
+            int delta = GameConfig.trophyDeltaByRank[indice];
+            if (GameConfig.isHostLobby) delta += 5;
+            if (puesto == 1 && GameConfig.trophyBote > 0) delta += GameConfig.trophyBote;
+
+            TopBarUI.QueuePendingDelta(delta); // Guardado seguro en PlayerPrefs
+            GameConfig.trophyAwarded = true;
+            GameConfig.trophyBote = 0;
+
+            string signo = delta >= 0 ? "+" : "";
+            Debug.Log($"[TROFEOS] Partida finalizada. Puesto {puesto}/{GameConfig.nPlayers}. Delta encolado: {signo}{delta}");
         }
 
         // PERFIL: Registrar resultado de la partida en estadísticas + historial
@@ -176,6 +192,10 @@ public class PauseManager : NetworkBehaviour
                 GameConfig.difficulty
             );
         }
+
+        // Limpiamos la bandera anti-ragequit (el final fue legal)
+        PlayerPrefs.SetInt("PartidaEnCurso", 0);
+        PlayerPrefs.Save();
 
         // Encendemos el panel visual
         pausePanel.SetActive(true); 
@@ -224,7 +244,7 @@ public class PauseManager : NetworkBehaviour
         isSpectating = true; // Pero somos un fantasma
         SetPauseState(false); // Quitamos la pausa y escondemos el panel
 
-        InteractionManager.Instance.SetInfoMessage("MODO ESPECTADOR: Viendo jugar a los bots.");
+        InteractionManager.Instance.SetInfoMessage("<color=#AAAAAA>Has sido eliminado. Ahora eres espectador.</color>", 9999f);
     }
 
     public void RestartGame()
@@ -244,46 +264,29 @@ public class PauseManager : NetworkBehaviour
 public async void QuitGame() 
 { 
     Time.timeScale = 1f;
+    LoadingManager.Instance?.MostrarCargando("Volviendo al menú...");
+
+    AplicarPenalizacionAbandono();
+
     isGameOver = true; // Prevenir que TriggerGameOver salte a la vez por la desconexión
 
-    // MONETIZACIÓN y ESTADÍSTICAS: Penalización por abandono voluntario
-    if (!GameConfig.prizeAwarded && GameConfig.currentFee >= 0)
+    int vivos = 1;
+    if (InteractionManager.Instance != null && InteractionManager.Instance.vidas != null)
     {
-        // 1. Calculamos vivos para saber en qué puesto te vas
-        int vivos = 1;
-        if (InteractionManager.Instance != null && InteractionManager.Instance.vidas != null)
-        {
-            vivos = 0;
-            foreach (int v in InteractionManager.Instance.vidas) if (v > 0) vivos++;
-        }
-        if (vivos < 1) vivos = 1;
+        vivos = 0;
+        foreach (int v in InteractionManager.Instance.vidas) if (v > 0) vivos++;
+    }
+    if (vivos < 1) vivos = 1;
 
-        int dineroHistorial = -GameConfig.currentFee; // Por defecto pierdes el fee
+    int dineroHistorial = -GameConfig.currentFee; 
+    if (!GameConfig.isPrivateMatch) dineroHistorial = 0; // Reembolso en pública
 
-        if (GameConfig.isPrivateMatch && GameConfig.isHostLobby && GameConfig.currentFee > 0)
-        {
-            // El Host de una privada huye: pierde la fianza de los demás
-            int penalty = GameConfig.currentFee * (GameConfig.nHumanPlayers - 1);
-            if (penalty > 0)
-            {
-                TopBarUI.Instance.GastarMonedas(penalty);
-                Debug.Log($"[ECONOMÍA] Penalización por abandonar hosteando privada: -{penalty} monedas.");
-            }
-        }
-        else if (!GameConfig.isPrivateMatch)
-        {
-            // PÚBLICA: Nadie pierde dinero si el host se va — reembolso del fee
-            TopBarUI.Instance.ActualizarMonedas(GameConfig.currentFee);
-            dineroHistorial = 0; // En el historial aparece 0
-            Debug.Log($"[ECONOMÍA] Matchmaking público: reembolso de {GameConfig.currentFee} monedas.");
-
-            // PENALIZACIÓN ADICIONAL: Si el que se va de la pública es el Host, se traga un anuncio sí o sí
-            if (GameConfig.isHostLobby && AdManager.Instance != null)
-            {
-                Debug.Log("[CASTIGO] El Host ha abandonado la partida pública. Mostrando anuncio de castigo...");
-                AdManager.Instance.MostrarAnuncioIntersticial();
-            }
-        }
+    // PENALIZACIÓN ADICIONAL: Si el que se va de la pública es el Host, se traga un anuncio sí o sí
+    if (!GameConfig.isPrivateMatch && GameConfig.isHostLobby && AdManager.Instance != null)
+    {
+        Debug.Log("[CASTIGO] El Host ha abandonado la partida pública. Mostrando anuncio de castigo...");
+        AdManager.Instance.MostrarAnuncioIntersticial();
+    }
 
         // Registrar en el historial como "Abandonada"
         if (ProfileManager.Instance != null)
@@ -301,9 +304,6 @@ public async void QuitGame()
             );
         }
 
-        GameConfig.prizeAwarded = true; 
-    }
-
     // ANALÍTICAS: Evento match_abandoned
     if (AnalyticsManager.Instance != null)
     {
@@ -320,6 +320,86 @@ public async void QuitGame()
 
     UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
 }
+
+    // =======================================================
+    // GESTIÓN DE CIERRES ABRUPTOS (Alt+F4 o Cerrar Ventana)
+    // =======================================================
+    private void OnApplicationQuit()
+    {
+        AplicarPenalizacionAbandono();
+    }
+
+    private void AplicarPenalizacionAbandono()
+    {
+        // Si la partida ya se ha acabado por cauces normales o ya hemos penalizado, no hacemos nada
+        if (isGameOver || GameConfig.prizeAwarded || GameConfig.currentFee < 0) return;
+
+        int vivos = 1;
+        if (InteractionManager.Instance != null && InteractionManager.Instance.vidas != null)
+        {
+            vivos = 0;
+            foreach (int v in InteractionManager.Instance.vidas) if (v > 0) vivos++;
+        }
+        if (vivos < 1) vivos = 1;
+
+        if (GameConfig.isPrivateMatch && GameConfig.isHostLobby && GameConfig.currentFee > 0)
+        {
+            int penalty = GameConfig.currentFee * (GameConfig.nHumanPlayers - 1);
+            if (penalty > 0)
+            {
+                TopBarUI.QueuePendingDelta(0, -penalty);
+                Debug.Log($"[ECONOMÍA] Alt+F4/Abandono privada: -{penalty} monedas.");
+            }
+        }
+        else if (!GameConfig.isPrivateMatch)
+        {
+            TopBarUI.QueuePendingDelta(0, GameConfig.currentFee);
+            Debug.Log($"[ECONOMÍA] Alt+F4/Abandono pública: reembolso de {GameConfig.currentFee} monedas.");
+
+            // TROFEOS: Solo en partidas públicas
+            if (!GameConfig.trophyAwarded && GameConfig.currentMatchMode == "public")
+            {
+                int indice = Mathf.Clamp(vivos - 1, 0, GameConfig.trophyDeltaByRank.Length - 1);
+                int deltaTrofeos = GameConfig.trophyDeltaByRank[indice];
+                if (deltaTrofeos > 0) deltaTrofeos = 0; 
+                TopBarUI.QueuePendingDelta(deltaTrofeos);
+                GameConfig.trophyAwarded = true;
+                Debug.Log($"[TROFEOS] Alt+F4/Abandono pública en puesto {vivos}. Delta encolado: {deltaTrofeos}");
+            }
+        }
+
+        // Marcamos como procesado para no duplicar si pasa Quit y Pause a la vez
+        GameConfig.prizeAwarded = true;
+        
+        // Limpiamos la bandera anti-ragequit (ya aplicamos el castigo o reembolso en esta sesión)
+        PlayerPrefs.SetInt("PartidaEnCurso", 0);
+        PlayerPrefs.Save();
+    }
+
+    /// <summary>
+    /// Actualiza el castigo offline por ragequit en base al número de jugadores que siguen vivos.
+    /// Se llama cada vez que se resuelve una ronda y las vidas cambian.
+    /// </summary>
+    public void UpdateAntiRageQuitPenalty()
+    {
+        // Solo aplica en públicas y si la partida sigue en curso
+        if (GameConfig.isPrivateMatch || GameConfig.prizeAwarded) return;
+
+        int vivos = 1;
+        if (InteractionManager.Instance != null && InteractionManager.Instance.vidas != null)
+        {
+            vivos = 0;
+            foreach (int v in InteractionManager.Instance.vidas) if (v > 0) vivos++;
+        }
+        if (vivos < 1) vivos = 1;
+
+        int indice = Mathf.Clamp(vivos - 1, 0, GameConfig.trophyDeltaByRank.Length - 1);
+        int penalizacionMax = Mathf.Min(0, GameConfig.trophyDeltaByRank[indice]);
+        
+        PlayerPrefs.SetInt("RageQuit_Trophies", penalizacionMax);
+        PlayerPrefs.Save();
+        Debug.Log($"[ANTI-RAGEQUIT] Actualizado castigo local a: {penalizacionMax} trofeos (quedan {vivos} vivos).");
+    }
 
     private void SetPauseState(bool isPaused)
     {

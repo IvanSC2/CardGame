@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using System.Collections;
 using System.Collections.Generic; 
+using System.Linq;
 using TMPro; 
 using Unity.Netcode; 
 
@@ -72,9 +73,9 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
             // Encontramos la posición exacta de la carta en la mano (para que el resto de jugadores sepan cuál es)
             int indexCartaEnMano = cardToMove.transform.GetSiblingIndex();
 
-            // Si soy yo mismo el que juega (o soy el Host jugando por un Bot), solicito la jugada
+            // Si soy yo mismo el que juega (o soy el Host forzando jugada de Bot/AFK), solicito la jugada
             int localId = InteractionManager.Instance.MySeatIndex;
-            if (duenoIndex == localId || (IsServer && !InteractionManager.Instance.IsPlayerConnectedAndHuman(duenoIndex)))
+            if (duenoIndex == localId || IsServer)
             {   
                 InteractionManager.Instance.ClearSelection();
                 // Enviar la petición al Servidor
@@ -214,7 +215,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
             UICard card = kvp.Value;
             
             int score = CalculateScore(card.cardData);
-            string nombreJugador = (playerIndex == 0) ? "TÚ" : $"BOT {playerIndex}";
+            string nombreJugador = InteractionManager.Instance.GetPlayerName(playerIndex);
             registroCartas.Add($"{nombreJugador} [{card.cardData.rank} de {card.cardData.suit} = {score} pts]");
             
             if (score > maxScore)
@@ -229,10 +230,24 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
         if (winnerIndex != -1)
         {
             InteractionManager.Instance.bazasGanadas[winnerIndex]++;
+
+            // Extraemos rank y suit de la carta ganadora para resaltarla en el TableTracker
+            string winRank = cartasEnMesa[winnerIndex].cardData.rank;
+            string winSuit = cartasEnMesa[winnerIndex].cardData.suit;
             
-            AnunciarGanadorBazaClientRpc(winnerIndex, InteractionManager.Instance.bazasGanadas[winnerIndex]);
+            AnunciarGanadorBazaClientRpc(winnerIndex, InteractionManager.Instance.bazasGanadas[winnerIndex], winRank, winSuit);
         }
         
+        // Registrar las cartas en la memoria de la IA (para niveles Difficult+)
+        if (AIController.Instance != null)
+        {
+            var cardDatas = cartasEnMesa.Values
+                .Where(c => c != null)
+                .Select(c => c.cardData)
+                .ToList();
+            AIController.Instance.RegisterPlayedCards(cardDatas);
+        }
+
         UpdateUIClientRpc(); 
 
         int limiteRonda = InteractionManager.Instance.currentRoundCards;
@@ -248,14 +263,20 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
     }
 
     [Rpc(SendTo.Everyone)]
-    private void AnunciarGanadorBazaClientRpc(int winnerIndex, int totalBazasDelGanador)
+    private void AnunciarGanadorBazaClientRpc(int winnerIndex, int totalBazasDelGanador, string winRank, string winSuit)
     {
         // Actualizamos el array local del Cliente con el dato real del Servidor
         InteractionManager.Instance.bazasGanadas[winnerIndex] = totalBazasDelGanador;
 
         int localId = InteractionManager.Instance.MySeatIndex;
-        if (winnerIndex == localId) InteractionManager.Instance.SetInfoMessage("¡TÚ GANAS LA BAZA!\n");
-        else InteractionManager.Instance.SetInfoMessage($"¡EL JUGADOR {winnerIndex} GANA LA BAZA!\n");
+        string nombreReal = InteractionManager.Instance.GetPlayerName(winnerIndex);
+        if (winnerIndex == localId) 
+            InteractionManager.Instance.SetInfoMessage("<color=#55FF55><b>¡GANASTE LA BAZA!</b></color>", 4f);
+        else 
+            InteractionManager.Instance.SetInfoMessage($"<color=#FF5555><b>{nombreReal}</b></color> se lleva la baza.", 4f);
+
+        // Resaltar en verde la carta ganadora en el TableTracker
+        TableTrackerUI.Instance?.HighlightWinner(winRank, winSuit);
     }
 
     IEnumerator WaitAndResolveRound()
@@ -268,7 +289,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
     {
         if (!IsServer) return;
 
-        string mensajeResultado = "RESULTADOS:\n";
+        string mensajeResultado = "<b>RESUMEN DE RONDA</b>\n";
         InteractionManager.Instance.rondasJugadasTotales++;
         int jugadoresVivos = 0;
         int totalPlayers = InteractionManager.Instance.totalPlayers;
@@ -279,22 +300,30 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
 
             int bazas = InteractionManager.Instance.bazasGanadas[i];
             int apuesta = InteractionManager.Instance.apuestas[i];
-            string nombre = (i == 0) ? "TÚ" : $"BOT {i}"; // Esto lo mantengo para los logs del server
+            string nombre = InteractionManager.Instance.GetPlayerName(i); // Esto lo mantengo para los logs del server
 
             InteractionManager.Instance.bazasTotales[i] += bazas;
 
             if (bazas == apuesta)
             {
-                mensajeResultado += $"{nombre}: CUMPLE.\n";
                 InteractionManager.Instance.apuestasAcertadasTotales[i]++;
             }
             else
             {
                 InteractionManager.Instance.vidas[i]--; 
-                mensajeResultado += $"{nombre}: FALLA (-1 Vida).\n";
+                string nombreReal = InteractionManager.Instance.GetPlayerName(i);
+                if (i == InteractionManager.Instance.MySeatIndex)
+                    mensajeResultado += $"<color=#FF5555>Has perdido 1 vida 💔</color>\n";
+                else
+                    mensajeResultado += $"<color=#FF5555>{nombreReal} pierde 1 vida 💔</color>\n";
             }
 
             if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivos++;
+        }
+
+        if (mensajeResultado == "<b>RESUMEN DE RONDA</b>\n")
+        {
+            mensajeResultado += "<color=#55FF55>¡Todos los jugadores salvan sus vidas!</color>";
         }
 
         // Enviamos la resolución al resto de jugadores (para que actualicen vidas/texto)
@@ -309,7 +338,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
     [Rpc(SendTo.Everyone)]
     private void SincronizarResolucionRondaClientRpc(string mensaje, int[] vidasServidor, int[] bazasTot, int[] apuestasAcertadasTot)
     {
-        InteractionManager.Instance.SetInfoMessage(mensaje);
+        InteractionManager.Instance.SetInfoMessage(mensaje, 7f);
         
         int localId = InteractionManager.Instance.MySeatIndex;
         // Comprobamos nuestra vida ANTES de actualizar
@@ -330,6 +359,12 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
         int jugadoresVivos = 0;
         foreach (int v in InteractionManager.Instance.vidas) if (v > 0) jugadoresVivos++;
 
+        // Actualizar el castigo dinámico de ragequit según los que queden vivos
+        if (PauseManager.Instance != null)
+        {
+            PauseManager.Instance.UpdateAntiRageQuitPenalty();
+        }
+
         // --- CADA CLIENTE JUZGA SU PROPIO GAME OVER ---
         if (estabaVivo && !sigoVivo)
         {
@@ -347,6 +382,17 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
     private System.Collections.IEnumerator DelayedGameOver(int puesto, float delay)
     {
         yield return new WaitForSeconds(delay);
+
+        // TROFEOS: Si es una partida pública y el jugador acaba de morir (no es el ganador final),
+        // contribuimos con los trofeos que pierde al bote, para que los supervivientes los recojan.
+        if (GameConfig.currentMatchMode == "public" && puesto > 1 && !GameConfig.trophyAwarded)
+        {
+            int indice = Mathf.Clamp(puesto - 1, 0, GameConfig.trophyDeltaByRank.Length - 1);
+            int trofeosPerdidos = Mathf.Abs(Mathf.Min(0, GameConfig.trophyDeltaByRank[indice]));
+            GameConfig.trophyBote += trofeosPerdidos;
+            Debug.Log($"[TROFEOS] Jugador muere en puesto {puesto}. Aporta {trofeosPerdidos} trofeos al bote. Bote total: {GameConfig.trophyBote}");
+        }
+
         if (PauseManager.Instance != null)
             PauseManager.Instance.TriggerGameOver(puesto);
     }
@@ -359,6 +405,12 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
         InteractionManager.Instance.AdvanceRoundSequence();
         
         ReanudarPartidaClientRpc(InteractionManager.Instance.currentRoundCards);
+
+        // Disparamos la siguiente ronda de cartas automáticamente
+        if (IsServer)
+        {
+            StartCoroutine(InteractionManager.Instance.StartNewRoundServer());
+        }
     }
 
     [Rpc(SendTo.Everyone)]
@@ -371,6 +423,8 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
             InteractionManager.Instance.bazasGanadas[i] = 0;
             InteractionManager.Instance.apuestas[i] = -1;
         }
+        // Limpiar la memoria de cartas para la nueva ronda (IA niveles 3+)
+        if (AIController.Instance != null) AIController.Instance.ResetRoundMemory();
         UpdateUI();
     }
 
@@ -378,12 +432,15 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
     private void ReanudarPartidaClientRpc(int curRoundCards)
     {
         InteractionManager.Instance.isPaused = false;
-        InteractionManager.Instance.SetInfoMessage($"Ronda terminada.\nSiguiente: {curRoundCards} cartas.");
+        InteractionManager.Instance.SetInfoMessage($"<b>¡NUEVA RONDA!</b> Repartiendo {curRoundCards} cartas...", 4f);
     }
 
     IEnumerator CleanTableRoutine(int nextTurn)
     {
-        yield return new WaitForSeconds(1.5f);
+        // El reloj de turno se ocultará/marcará PAUSA mientras esperamos
+        InteractionManager.Instance.turnEndTime.Value = 0f;
+        
+        yield return new WaitForSeconds(3.0f);
         LimpiarMesaIntermediaClientRpc();
         
         InteractionManager.Instance.SetTurn(nextTurn);
@@ -392,6 +449,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
     [Rpc(SendTo.Everyone)]
     private void LimpiarMesaIntermediaClientRpc()
     {
+        TableTrackerUI.Instance?.ClearHighlight();
         ClearTableNow();
         InteractionManager.Instance.isPaused = false;
     }

@@ -15,10 +15,12 @@ public class TablePerspectiveManager : MonoBehaviour
     public float escalaFrente = 1f;
     public float escalaFondo = 0.65f;
 
+#if UNITY_EDITOR
     [Header("DEBUG: ¿Qué números está leyendo Unity?")]
     [Tooltip("Mira aquí para ver la Pos Y real que lee el código")]
     public float posY_Leida_P1;
     public float posY_Leida_P2;
+#endif
 
     void Update()
     {
@@ -31,9 +33,10 @@ public class TablePerspectiveManager : MonoBehaviour
                 // Ahora lee exactamente la casilla "Pos Y" de tu Inspector
                 float posYActual = handAreas[i].anchoredPosition.y;
 
-                // Muestro los números en el Inspector 
+#if UNITY_EDITOR
                 if (i == 0) posY_Leida_P1 = posYActual;
                 if (i == 1) posY_Leida_P2 = posYActual;
+#endif
 
                 // Calcula la regla de tres
                 float porcentaje = Mathf.InverseLerp(yAbajo, yFondo, posYActual);

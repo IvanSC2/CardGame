@@ -26,6 +26,8 @@ public class SessionNetworkManager : MonoBehaviour
         if (Instance == null) { Instance = this; DontDestroyOnLoad(gameObject); }
         else { Destroy(gameObject); return; }
 
+        LoadingManager.Instance?.MostrarCargando("Conectando con el servidor...");
+
         try
         {
             if (UnityServices.State == ServicesInitializationState.Uninitialized)
@@ -45,7 +47,15 @@ public class SessionNetworkManager : MonoBehaviour
                 Debug.Log($"[3/3] Autenticado en la nube. PlayerID: {AuthenticationService.Instance.PlayerId}");
 
                 if (TopBarUI.Instance != null) await TopBarUI.Instance.CargarEconomiaNube();
-                if (ProfileManager.Instance != null) await ProfileManager.Instance.CargarPerfilCompleto();
+                if (ProfileManager.Instance != null) 
+                {
+                    await ProfileManager.Instance.CargarPerfilCompleto();
+                    // Mostramos el panel de bienvenida SOLO si estamos en el menú y no tiene nombre
+                    if (!ProfileManager.Instance.TieneNickname() && MenuManager.Instance != null && MenuManager.Instance.welcomePanel != null)
+                    {
+                        MenuManager.Instance.welcomePanel.SetActive(true);
+                    }
+                }
                 await SincronizarNoAds();
 
                 // ANALÍTICAS: Iniciar recolección tras autenticar
@@ -56,6 +66,10 @@ public class SessionNetworkManager : MonoBehaviour
             }
         }
         catch (System.Exception e) { Debug.LogError($"Error grave al arrancar UGS: {e.Message}"); }
+        finally
+        {
+            LoadingManager.Instance?.OcultarCargando();
+        }
     }
 
     // =========================================================================
@@ -84,6 +98,9 @@ public class SessionNetworkManager : MonoBehaviour
             string codigoGenerado = currentSession.Code;
 
             
+            // Desuscripción defensiva: evita listeners zombie si se reutiliza el método
+            currentSession.Deleted -= OnSessionDeleted;
+            currentSession.SessionHostChanged -= OnHostChanged;
             currentSession.Deleted += OnSessionDeleted;
             currentSession.SessionHostChanged += OnHostChanged;
 
@@ -112,6 +129,8 @@ public class SessionNetworkManager : MonoBehaviour
         catch (System.Exception e)
         {
             Debug.LogError($"Error general al crear la sala: {e.Message}");
+            if (MenuManager.Instance != null)
+                MenuManager.Instance.MostrarPopupInfo("No se pudo crear la sala. Comprueba tu conexión a internet e inténtalo de nuevo.");
             return null;
         }
     }
@@ -153,6 +172,9 @@ public class SessionNetworkManager : MonoBehaviour
 
             if (currentSession != null)
             {
+                // Desuscripción defensiva: evita listeners zombie
+                currentSession.Deleted -= OnSessionDeleted;
+                currentSession.SessionHostChanged -= OnHostChanged;
                 currentSession.Deleted += OnSessionDeleted;
                 currentSession.SessionHostChanged += OnHostChanged;
 
@@ -167,6 +189,8 @@ public class SessionNetworkManager : MonoBehaviour
         catch (SessionException e)
         {
             Debug.LogError($"Error al unirse definitivamente: {e.Message}");
+            if (MenuManager.Instance != null)
+                MenuManager.Instance.MostrarPopupInfo("No se pudo unir a la sala. Es posible que la sala esté llena o haya cerrado.");
             return false;
         }
     }
@@ -201,9 +225,17 @@ public class SessionNetworkManager : MonoBehaviour
                 lobbyUI.btnLeaveMatchmaking.gameObject.SetActive(true);
 
             var matchmakerOptions = new MatchmakerOptions { QueueName = "PublicQueue" };
+
+            // Enviamos los trofeos del jugador como atributo de ticket para emparejamiento por rango
+            int misTrofeos = (TopBarUI.Instance != null) ? TopBarUI.Instance.GetTrofeos() : 100;
+            matchmakerOptions.TicketAttributes = new Dictionary<string, object>
+            {
+                { "trophies", (double)misTrofeos }
+            };
+
             var sessionOptions = new SessionOptions
             {
-                MaxPlayers = 4,
+                MaxPlayers = 6, // Soporte para hasta 6 jugadores (relajaciones en UGS Dashboard)
                 IsPrivate = false
             }.WithRelayNetwork(); 
 
@@ -219,6 +251,9 @@ public class SessionNetworkManager : MonoBehaviour
             if (lobbyUI != null && lobbyUI.btnLeaveMatchmaking != null)
                 lobbyUI.btnLeaveMatchmaking.gameObject.SetActive(false);
 
+            // Desuscripción defensiva: evita listeners zombie
+            currentSession.Deleted -= OnSessionDeleted;
+            currentSession.SessionHostChanged -= OnHostChanged;
             currentSession.Deleted += OnSessionDeleted;
             currentSession.SessionHostChanged += OnHostChanged;
 
@@ -254,7 +289,11 @@ public class SessionNetworkManager : MonoBehaviour
             {
                 Debug.LogError($"[MATCHMAKING-ERROR] Fallo crítico Multiplayer: {e.Message}");
                 await AbandonarSala(true);
-                if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
+                if (MenuManager.Instance != null)
+                {
+                    MenuManager.Instance.MostrarHub();
+                    MenuManager.Instance.MostrarPopupInfo("Se ha perdido la conexión con el servidor de matchmaking. Vuelves al menú principal.");
+                }
             }
         }
         catch (System.OperationCanceledException)
@@ -298,7 +337,11 @@ public class SessionNetworkManager : MonoBehaviour
                 // Error real de sesión — no reintentamos
                 Debug.LogError($"[MATCHMAKING-ERROR] Fallo crítico Session: {e.Message}");
                 await AbandonarSala(true);
-                if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
+                if (MenuManager.Instance != null)
+                {
+                    MenuManager.Instance.MostrarHub();
+                    MenuManager.Instance.MostrarPopupInfo("Error inesperado en la sesión. Vuelves al menú principal.");
+                }
             }
         }
     }
@@ -332,6 +375,8 @@ public class SessionNetworkManager : MonoBehaviour
         // Si ya estamos ejecutando esta rutina, ignoramos la llamada duplicada
         if (_expulsandoAlHub) return;
         _expulsandoAlHub = true;
+
+        LoadingManager.Instance?.MostrarCargando("Volviendo al menú...");
 
         try
         {
@@ -396,8 +441,34 @@ public class SessionNetworkManager : MonoBehaviour
                     }
                     else
                     {
-                        // Pública: Devolvemos fee íntegro
-                        TopBarUI.Instance.ActualizarMonedas(GameConfig.currentFee);
+                        // Pública: Devolvemos fee íntegro + gestionamos trofeos del host
+                        // Usamos QueuePendingDelta (seguro desde escena de juego sin TopBarUI)
+                        TopBarUI.QueuePendingDelta(0, GameConfig.currentFee); // Reembolso del fee
+
+                        // --- TROFEOS: El host recibe la penalización de su puesto actual ---
+                        if (!GameConfig.trophyAwarded && GameConfig.currentMatchMode == "public")
+                        {
+                            int puestoHost = Mathf.Max(1, clientesVivos);
+                            int indiceHost = Mathf.Clamp(puestoHost - 1, 0, GameConfig.trophyDeltaByRank.Length - 1);
+                            int deltaHost = GameConfig.trophyDeltaByRank[indiceHost];
+                            int trofeosPerdidosHost = Mathf.Abs(Mathf.Min(0, deltaHost));
+
+                            int boteTotal = GameConfig.trophyBote + trofeosPerdidosHost;
+                            int supervivientesReales = Mathf.Max(1, clientesVivos); // Ahora sí dividimos entre los que quedan
+                            int trofeosPorSuperviviente = supervivientesReales > 0 ? boteTotal / supervivientesReales : 0;
+
+                            // TROFEOS GARANTIZADOS: El cliente sobrevive y el host se rinde.
+                            // Le damos como mínimo los trofeos del peor puesto que tenían asegurado.
+                            int miIndiceGarantizado = Mathf.Clamp(clientesVivos - 1, 0, GameConfig.trophyDeltaByRank.Length - 1);
+                            int misTrofeosGarantizados = GameConfig.trophyDeltaByRank[miIndiceGarantizado];
+                            if (misTrofeosGarantizados < 0) misTrofeosGarantizados = 0; // No restamos si iba perdiendo y el host se fue
+
+                            TopBarUI.QueuePendingDelta(trofeosPorSuperviviente + misTrofeosGarantizados);
+                            GameConfig.trophyAwarded = true;
+                            GameConfig.trophyBote = 0;
+
+                            Debug.Log($"[TROFEOS] Host abandonó. Bote repartido: +{trofeosPorSuperviviente}. Rango Garantizado: +{misTrofeosGarantizados}. Total encolado: {trofeosPorSuperviviente + misTrofeosGarantizados}");
+                        }
 
                         if (ProfileManager.Instance != null)
                         {
@@ -412,7 +483,7 @@ public class SessionNetworkManager : MonoBehaviour
                                 GameConfig.currentMatchMode,
                                 clientesVivos,
                                 GameConfig.nPlayers,
-                                0, // No pierde ni gana
+                                0, // No pierde ni gana dinero
                                 nombres,
                                 GameConfig.difficulty,
                                 "Interrumpida"
@@ -435,11 +506,17 @@ public class SessionNetworkManager : MonoBehaviour
 
             if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != "MainMenu")
             {
+                // LoadingManager se ocultará cuando MenuManager y TopBarUI hayan cargado (TopBarUI lo apagará)
                 UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
             }
             else
             {
-                if (MenuManager.Instance != null) MenuManager.Instance.MostrarHub();
+                if (MenuManager.Instance != null)
+                {
+                    MenuManager.Instance.MostrarHub();
+                    MenuManager.Instance.MostrarPopupInfo("La conexión con la sala se ha perdido. Has vuelto al menú principal.");
+                }
+                LoadingManager.Instance?.OcultarCargando();
             }
         }
         catch (System.Exception e)

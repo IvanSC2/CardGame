@@ -271,6 +271,47 @@ public class ProfileManager : MonoBehaviour
     }
 
     /// <summary>
+    /// Cierra la sesión anónima actual e inicia sesión con un correo y contraseña.
+    /// Útil para recuperar cuentas tras desinstalar el juego.
+    /// </summary>
+    /// <returns>null si fue exitoso, o el string del error si falló</returns>
+    public async Task<string> LoginCuenta(string email, string password)
+    {
+        try
+        {
+            // 1. Cerramos la sesión anónima basura que se nos asignó al arrancar
+            AuthenticationService.Instance.SignOut();
+            AuthenticationService.Instance.ClearSessionToken();
+
+            // 2. Iniciamos sesión con nuestras credenciales reales
+            await AuthenticationService.Instance.SignInWithUsernamePasswordAsync(email, password);
+
+            Debug.Log($"[PERFIL] Login exitoso. Nuevo PlayerID: {AuthenticationService.Instance.PlayerId}");
+
+            // 3. Recargamos todos los datos del servidor para sobreescribir la basura local
+            await CargarPerfilCompleto();
+            
+            // 4. Recargamos la economía para sincronizar monedas y trofeos
+            if (TopBarUI.Instance != null)
+            {
+                await TopBarUI.Instance.CargarEconomiaNube();
+            }
+
+            return null; // Éxito
+        }
+        catch (AuthenticationException e)
+        {
+            Debug.LogError($"[PERFIL] Error de autenticación al logear: {e.Message}");
+            return e.Message;
+        }
+        catch (RequestFailedException e)
+        {
+            Debug.LogError($"[PERFIL] Error de red al logear: {e.Message}");
+            return "Error de red: " + e.Message;
+        }
+    }
+
+    /// <summary>
     /// Actualiza el avatar del jugador con una imagen de la galería.
     /// </summary>
     /// <param name="localPath">Ruta local de la imagen seleccionada</param>
@@ -289,5 +330,31 @@ public class ProfileManager : MonoBehaviour
         if (!string.IsNullOrEmpty(Profile.nickname))
             return Profile.nickname;
         return "Invitado";
+    }
+    /// <summary>
+    /// Borra toda la cuenta del usuario de la nube (datos y autenticación)
+    /// </summary>
+    public async Task DeleteAccountAsync()
+    {
+        try
+        {
+            // 1. Borramos los datos de Cloud Save primero
+            var keysToDelete = new List<string> { KEY_PROFILE, KEY_STATS, KEY_HISTORY, "MisMonedas", "NoAdsOwned" };
+            await CloudSaveService.Instance.Data.Player.DeleteAllAsync();
+
+            // 2. Borramos la cuenta de Authentication
+            await AuthenticationService.Instance.DeleteAccountAsync();
+
+            // 3. Limpiamos datos locales
+            PlayerPrefs.DeleteAll();
+            PlayerPrefs.Save();
+
+            Debug.Log("[PERFIL] Cuenta borrada por completo.");
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[PERFIL] Error al borrar cuenta: {e.Message}");
+            throw; // Re-lanzar para que la UI pueda mostrar el error
+        }
     }
 }

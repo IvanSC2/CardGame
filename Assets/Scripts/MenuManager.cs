@@ -45,6 +45,12 @@ public class MenuManager : MonoBehaviour
     public OptionController privateEntryFee;
     public TMP_Text textoPrecioPrivada; 
 
+    [Header("Sistema de Popup Global")]
+    public GameObject panelInfoPopup;
+    public TMP_Text txtPopupMessage;
+    public Button btnPopupClose;
+    public Button btnPopupGoToShop;
+
     private MenuLobbyUI _cachedMenuLobbyUI;
 
     private void Awake()
@@ -53,18 +59,67 @@ public class MenuManager : MonoBehaviour
         else Destroy(gameObject);
     }
 
+    // =======================================================
+    // POPUP GLOBAL
+    // =======================================================
+    /// <summary>
+    /// Muestra un mensaje en el Popup Global. Si esErrorDinero=true, activa el botón de ir a la Tienda.
+    /// </summary>
+    public void MostrarPopupInfo(string mensaje, bool esErrorDinero = false)
+    {
+        if (panelInfoPopup == null) { Debug.LogWarning("[POPUP] Panel no asignado: " + mensaje); return; }
+
+        if (txtPopupMessage != null) txtPopupMessage.text = mensaje;
+
+        // Botón de Tienda: solo visible si es error de dinero
+        if (btnPopupGoToShop != null) btnPopupGoToShop.gameObject.SetActive(esErrorDinero);
+
+        panelInfoPopup.SetActive(true);
+    }
+
+    public void CerrarPopup()
+    {
+        if (panelInfoPopup != null) panelInfoPopup.SetActive(false);
+    }
+
+    private void ConfigurarPopupBotones()
+    {
+        if (btnPopupClose != null)
+        {
+            btnPopupClose.onClick.RemoveAllListeners();
+            btnPopupClose.onClick.AddListener(CerrarPopup);
+        }
+        if (btnPopupGoToShop != null)
+        {
+            btnPopupGoToShop.onClick.RemoveAllListeners();
+            btnPopupGoToShop.onClick.AddListener(() =>
+            {
+                CerrarPopup();
+                MostrarTienda();
+            });
+        }
+    }
+
     private void Start()
     {
         MostrarHub();
+        ConfigurarPopupBotones();
+        if (panelInfoPopup != null) panelInfoPopup.SetActive(false);
+        
+        // Opciones de Tiempo (4 opciones)
+        if(practiceTime != null) { practiceTime.opciones = new string[] { "5s", "10s", "15s", "20s" }; practiceTime.ResetearComponente(); }
+        if(privateTime != null) { privateTime.opciones = new string[] { "5s", "10s", "15s", "20s" }; privateTime.ResetearComponente(); }
+        
+        // Opciones de Dificultad IA (7 niveles)
+        string[] diffOpciones = { "Ultra Easy", "Easy", "Normal", "Difficult", "Hard", "UltraHard", "Impossible" };
+        if(practiceBotAI != null) { practiceBotAI.opciones = diffOpciones; practiceBotAI.ResetearComponente(); }
+        if(privateDifficulty != null) { privateDifficulty.opciones = diffOpciones; privateDifficulty.ResetearComponente(); }
         
         if(practicePlayers != null) CalcularPremioPractica();
         if(privatePlayers != null) CalcularPremioPrivada();
 
-        // PERFIL: Si el jugador no tiene nickname, mostrar panel de bienvenida
-        if (!PlayerPrefs.HasKey("Nickname") && welcomePanel != null)
-        {
-            welcomePanel.SetActive(true);
-        }
+        // PERFIL: El WelcomePanel ya no se dispara aquí, sino en SessionNetworkManager 
+        // una vez que se ha descargado el perfil real de la nube.
 
         // ANALÍTICAS: Evento app_opened (Funnel 1, paso 1)
         if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.EventoAppOpened();
@@ -97,20 +152,34 @@ public class MenuManager : MonoBehaviour
     }
 
     public void IniciarFlujoPractica() { GameConfig.currentMatchMode = "practice"; ApagarTodosLosPaneles(); if(panelPractice != null) panelPractice.SetActive(true); }
-    public void IniciarFlujoPublico() { GameConfig.currentMatchMode = "public"; ApagarTodosLosPaneles(); if(panelMatchmakingLobby != null) panelMatchmakingLobby.SetActive(true); if(bBack != null) bBack.gameObject.SetActive(false); if(pToolBar != null) pToolBar.SetActive(false); }
+    public void IniciarFlujoPublico() 
+    { 
+        GameConfig.currentMatchMode = "public"; 
+        ApagarTodosLosPaneles(); 
+        if (_cachedMenuLobbyUI != null) _cachedMenuLobbyUI.ResetearLobbyCompleto();
+        if(panelMatchmakingLobby != null) panelMatchmakingLobby.SetActive(true); 
+        if(bBack != null) bBack.gameObject.SetActive(false); 
+        if(pToolBar != null) pToolBar.SetActive(false); 
+    }
     
     // Al pulsar "Private" en el Hub, venimos aquí:
     public void IniciarFlujoPrivado() 
     { 
         GameConfig.currentMatchMode = "private"; 
         ApagarTodosLosPaneles(); 
+        if (_cachedMenuLobbyUI != null) _cachedMenuLobbyUI.ResetearLobbyCompleto();
         if(panelPrivateChoice != null) panelPrivateChoice.SetActive(true);
         // ANALÍTICAS: Evento matchmaking_started (Funnel 1, paso 2)
         if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.EventoMatchmakingStarted("private");
     }
 
     // Al pulsar "Join" en pPrivate, venimos aquí:
-    public void MostrarPrivateJoin() { ApagarTodosLosPaneles(); if(panelPrivateJoin != null) panelPrivateJoin.SetActive(true); }
+    public void MostrarPrivateJoin() 
+    { 
+        ApagarTodosLosPaneles(); 
+        if (_cachedMenuLobbyUI != null) _cachedMenuLobbyUI.ResetearLobbyCompleto();
+        if(panelPrivateJoin != null) panelPrivateJoin.SetActive(true); 
+    }
     
     // Al pulsar "Create" (tras cargar la red), venimos aquí:
     public void MostrarPrivateLobby() { ApagarTodosLosPaneles(); if(panelPrivateLobby != null) panelPrivateLobby.SetActive(true); if(bBack != null) bBack.gameObject.SetActive(false); if(pToolBar != null) pToolBar.SetActive(false); }
@@ -156,21 +225,23 @@ public class MenuManager : MonoBehaviour
         int maxJugadores = practicePlayers.ObtenerIndice() + 2; // +2 porque el índice 0 equivale a 1v1 (2 jugadores)
         int dificultadBot = practiceBotAI.ObtenerIndice();
         
-        // implementar el tiempo por turno en Práctica en el futuro
-        // string tiempoStr = practiceTime.opciones[practiceTime.ObtenerIndice()].Replace("s", "");
-        // int turnTime = int.Parse(tiempoStr);
+        string tiempoStr = practiceTime.opciones[practiceTime.ObtenerIndice()].Replace("s", "");
+        int turnTime = int.Parse(tiempoStr);
 
         // 2. Guardamos en el GameConfig (Memoria Persistente)
         GameConfig.nPlayers = maxJugadores;
         GameConfig.difficulty = dificultadBot;
+        GameConfig.turnTime = turnTime;
 
-        Debug.Log($"[PRÁCTICA] Iniciando Host Local: {maxJugadores} Jugadores, Dificultad IA: {dificultadBot}");
+        Debug.Log($"[PRÁCTICA] Iniciando Host Local: {maxJugadores} Jugadores, Dificultad IA: {dificultadBot}, Tiempo Turno: {turnTime}s");
 
         // 3. Arrancamos el motor de red en modo HOST y cargamos la escena directamente
         if (Unity.Netcode.NetworkManager.Singleton != null)
         {
             // Limpiamos la baraja por seguridad antes de cambiar de escena
             if (CardDatabase.deck != null) CardDatabase.deck.Clear();
+            
+            LoadingManager.Instance?.MostrarCargando("Cargando partida...");
             
             Unity.Netcode.NetworkManager.Singleton.StartHost();
             Unity.Netcode.NetworkManager.Singleton.SceneManager.LoadScene("MainGame", UnityEngine.SceneManagement.LoadSceneMode.Single);
@@ -193,7 +264,7 @@ public class MenuManager : MonoBehaviour
 
         if (TopBarUI.Instance != null && !TopBarUI.Instance.TieneSuficientes(feeMatchmaking))
         {
-            Debug.LogWarning("No tienes dinero suficiente para el Matchmaking.");
+            MostrarPopupInfo("No tienes monedas suficientes para jugar en público. \n\nNecesitas 200 ♠.", esErrorDinero: true);
             return;
         }
 
@@ -213,6 +284,7 @@ public class MenuManager : MonoBehaviour
 
         //GameConfig.nPlayers = 4; 
         GameConfig.difficulty = 0; 
+        GameConfig.turnTime = 10f; 
 
         if (SessionNetworkManager.Instance != null)
         {
@@ -228,10 +300,10 @@ public class MenuManager : MonoBehaviour
         int entryFee = int.Parse(textoFee);
         int cantidadJugadores = privatePlayers.ObtenerIndice() + 2;
 
-        int bonusTiempo = (2 - privateTime.ObtenerIndice()) * 15;
-        int bonusIA = privateDifficulty.ObtenerIndice() * 20;
-
-        return (cantidadJugadores * entryFee) + bonusTiempo + bonusIA;
+        // Eliminamos el bonusTiempo y bonusIA para evitar inflación e inyección de dinero gratis.
+        // El premio estimado en el creador es Fee * (Max Jugadores de la sala)
+        // El premio real se recalculará justo al arrancar basándose en los humanos reales.
+        return (cantidadJugadores * entryFee);
     }
 
     public void CalcularPremioPrivada()

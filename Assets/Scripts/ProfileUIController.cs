@@ -64,6 +64,13 @@ public class ProfileUIController : MonoBehaviour
     public Button btnCancelSync;
     public TMP_Text txtSyncFeedback;
 
+    // ─── BORRADO DE CUENTA ─────────────────────────────────────────────────
+    [Header("Sub-panel de Borrado de Cuenta")]
+    public GameObject panelDeleteAccount;
+    public Button btnConfirmDelete;
+    public Button btnCancelDelete;
+    public TMP_Text txtDeleteFeedback;
+
     // ─── ESTADÍSTICAS ──────────────────────────────────────────────────────
     [Header("Contenedor de Estadísticas")]
     [Tooltip("Panel que contiene la lista vertical de KPIs.")]
@@ -157,7 +164,7 @@ public class ProfileUIController : MonoBehaviour
         if (bDeleteAccount != null)
         {
             bDeleteAccount.onClick.RemoveAllListeners();
-            bDeleteAccount.onClick.AddListener(ConfirmarBorrarCuenta);
+            bDeleteAccount.onClick.AddListener(AbrirBorrado);
         }
 
         // Confirmar nombre
@@ -174,7 +181,14 @@ public class ProfileUIController : MonoBehaviour
             btnConfirmSync.onClick.AddListener(ConfirmarVinculacion);
         }
 
-        // Cancelar edición o vinculación
+        // Confirmar borrado
+        if (btnConfirmDelete != null)
+        {
+            btnConfirmDelete.onClick.RemoveAllListeners();
+            btnConfirmDelete.onClick.AddListener(ConfirmarBorradoReal);
+        }
+
+        // Cancelar edición o vinculación o borrado
         if (btnCancelName != null)
         {
             btnCancelName.onClick.RemoveAllListeners();
@@ -184,6 +198,11 @@ public class ProfileUIController : MonoBehaviour
         {
             btnCancelSync.onClick.RemoveAllListeners();
             btnCancelSync.onClick.AddListener(() => { if (panelSyncAccount != null) panelSyncAccount.SetActive(false); });
+        }
+        if (btnCancelDelete != null)
+        {
+            btnCancelDelete.onClick.RemoveAllListeners();
+            btnCancelDelete.onClick.AddListener(() => { if (panelDeleteAccount != null) panelDeleteAccount.SetActive(false); });
         }
 
         // Filtros de estadísticas
@@ -532,6 +551,7 @@ public class ProfileUIController : MonoBehaviour
         if (panelSyncAccount == null) return;
         panelSyncAccount.SetActive(!panelSyncAccount.activeSelf);
         if (panelChangeName != null) panelChangeName.SetActive(false);
+        if (panelDeleteAccount != null) panelDeleteAccount.SetActive(false);
 
         if (inputEmail != null) inputEmail.text = "";
         if (inputPassword != null) inputPassword.text = "";
@@ -616,15 +636,67 @@ public class ProfileUIController : MonoBehaviour
     // =====================================================================
     // BORRADO DE CUENTA
     // =====================================================================
-    private void ConfirmarBorrarCuenta()
+    private void AbrirBorrado()
     {
-        // mostrar un diálogo de confirmación antes de borrar
-        // Por ahora, solo logging para seguridad
-        Debug.LogWarning("[PERFIL] Borrado de cuenta solicitado. Implementar diálogo de confirmación.");
+        if (panelDeleteAccount == null) return;
+        panelDeleteAccount.SetActive(!panelDeleteAccount.activeSelf);
+        if (panelChangeName != null) panelChangeName.SetActive(false);
+        if (panelSyncAccount != null) panelSyncAccount.SetActive(false);
 
-        // La lógica sería:
-        // 1. Mostrar un popup: "¿Estás seguro? Se perderán TODOS tus datos."
-        // 2. Si confirma: await AuthenticationService.Instance.DeleteAccountAsync();
-        // 3. Limpiar PlayerPrefs, CloudSave y volver al login
+        if (txtDeleteFeedback != null)
+        {
+            txtDeleteFeedback.text = "¿Estás seguro? Se perderán TODOS tus datos, trofeos y monedas para siempre.";
+            txtDeleteFeedback.color = Color.red;
+        }
+    }
+
+    private async void ConfirmarBorradoReal()
+    {
+        if (btnConfirmDelete != null) btnConfirmDelete.interactable = false;
+        if (txtDeleteFeedback != null)
+        {
+            txtDeleteFeedback.text = "Borrando cuenta en la nube...";
+            txtDeleteFeedback.color = Color.yellow;
+        }
+
+        try
+        {
+            // Borrar de UGS
+            await Unity.Services.Authentication.AuthenticationService.Instance.DeleteAccountAsync();
+
+            // Limpiar variables locales
+            PlayerPrefs.DeleteAll();
+            PlayerPrefs.Save();
+            Unity.Services.Authentication.AuthenticationService.Instance.SignOut();
+
+            if (txtDeleteFeedback != null)
+            {
+                txtDeleteFeedback.text = "✓ Cuenta eliminada con éxito. Reinicia el juego.";
+                txtDeleteFeedback.color = Color.green;
+            }
+
+            Debug.Log("[PERFIL] Cuenta borrada correctamente. Destruyendo Singletons para reinicio completo...");
+
+            // Esperar un segundo y medio para que el usuario lea el mensaje
+            await System.Threading.Tasks.Task.Delay(1500);
+
+            // Destruir los Singletons que sobreviven entre escenas (DontDestroyOnLoad)
+            // Esto obliga a que, al recargar la escena, vuelvan a ejecutar su Awake() y arranquen un nuevo SignInAnonymously
+            if (SessionNetworkManager.Instance != null) Destroy(SessionNetworkManager.Instance.gameObject);
+            if (ProfileManager.Instance != null) Destroy(ProfileManager.Instance.gameObject);
+
+            // Recargar la escena actual
+            UnityEngine.SceneManagement.SceneManager.LoadScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[PERFIL] Error al borrar cuenta: {e.Message}");
+            if (txtDeleteFeedback != null)
+            {
+                txtDeleteFeedback.text = "Error al borrar: " + e.Message;
+                txtDeleteFeedback.color = Color.red;
+            }
+            if (btnConfirmDelete != null) btnConfirmDelete.interactable = true;
+        }
     }
 }
