@@ -17,6 +17,7 @@ public class OptionController : MonoBehaviour
 
     public void AnteriorOpcion()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         indiceActual--;
         if(indiceActual < 0)
         {
@@ -27,6 +28,7 @@ public class OptionController : MonoBehaviour
     
     public void SiguienteOpcion()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
          indiceActual++;
         if(indiceActual >= opciones.Length)
         {

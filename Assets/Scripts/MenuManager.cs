@@ -10,6 +10,10 @@ public class MenuManager : MonoBehaviour
     public GameObject panelHub;
     public GameObject pToolBar;
     public Button bBack; //
+
+    [Header("Extras Hub")]
+    [Tooltip("Imagen u objeto externo al panelHub que se activa/desactiva junto a él")]
+    public GameObject extraHubOverlay;
     
     [Header("2. Perfil & Stats")]
     public GameObject panelProfile;
@@ -102,7 +106,8 @@ public class MenuManager : MonoBehaviour
 
     private void Start()
     {
-        MostrarHub();
+        AudioManager.Instance?.PlayMenuMusic();
+        MostrarHubSilencioso();
         ConfigurarPopupBotones();
         if (panelInfoPopup != null) panelInfoPopup.SetActive(false);
         
@@ -111,7 +116,7 @@ public class MenuManager : MonoBehaviour
         if(privateTime != null) { privateTime.opciones = new string[] { "5s", "10s", "15s", "20s" }; privateTime.ResetearComponente(); }
         
         // Opciones de Dificultad IA (7 niveles)
-        string[] diffOpciones = { "Ultra Easy", "Easy", "Normal", "Difficult", "Hard", "UltraHard", "Impossible" };
+        string[] diffOpciones = { "Ultra Facil", "Facil", "Normal", "Dificil", "Muy Dificil", "Experto", "Imposible" };
         if(practiceBotAI != null) { practiceBotAI.opciones = diffOpciones; practiceBotAI.ResetearComponente(); }
         if(privateDifficulty != null) { privateDifficulty.opciones = diffOpciones; privateDifficulty.ResetearComponente(); }
         
@@ -129,9 +134,21 @@ public class MenuManager : MonoBehaviour
 
     public void MostrarHub() 
     { 
+        MostrarHubInterno(true);
+    }
+
+    public void MostrarHubSilencioso()
+    {
+        MostrarHubInterno(false);
+    }
+
+    private void MostrarHubInterno(bool playSound)
+    {
+        if (playSound) AudioManager.Instance?.PlayButtonGeneric();
         GameConfig.gameStarted = false;
         ApagarTodosLosPaneles(); 
         if(panelHub != null) panelHub.SetActive(true); 
+        if(extraHubOverlay != null) extraHubOverlay.SetActive(true);
         if(pToolBar != null) pToolBar.SetActive(true);
         if(bBack != null) bBack.gameObject.SetActive(true);
         
@@ -142,18 +159,20 @@ public class MenuManager : MonoBehaviour
             _cachedMenuLobbyUI.ResetearLobbyCompleto();
         }
     }
-    public void MostrarPerfil() { ApagarTodosLosPaneles(); if(panelProfile != null) panelProfile.SetActive(true); }
+    public void MostrarPerfil() { AudioManager.Instance?.PlayButtonGeneric(); ApagarTodosLosPaneles(); if(panelProfile != null) panelProfile.SetActive(true); }
     public void MostrarTienda() 
     { 
+        AudioManager.Instance?.PlayButtonGeneric();
         ApagarTodosLosPaneles(); 
         if(panelShop != null) panelShop.SetActive(true);
         // ANALÍTICAS: Evento shop_opened (Funnel 2, paso 2)
         if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.EventoShopOpened();
     }
 
-    public void IniciarFlujoPractica() { GameConfig.currentMatchMode = "practice"; ApagarTodosLosPaneles(); if(panelPractice != null) panelPractice.SetActive(true); }
+    public void IniciarFlujoPractica() { AudioManager.Instance?.PlayButtonGeneric(); GameConfig.currentMatchMode = "practice"; ApagarTodosLosPaneles(); if(panelPractice != null) panelPractice.SetActive(true); }
     public void IniciarFlujoPublico() 
     { 
+        AudioManager.Instance?.PlayButtonGeneric();
         GameConfig.currentMatchMode = "public"; 
         ApagarTodosLosPaneles(); 
         if (_cachedMenuLobbyUI != null) _cachedMenuLobbyUI.ResetearLobbyCompleto();
@@ -165,6 +184,7 @@ public class MenuManager : MonoBehaviour
     // Al pulsar "Private" en el Hub, venimos aquí:
     public void IniciarFlujoPrivado() 
     { 
+        AudioManager.Instance?.PlayButtonGeneric();
         GameConfig.currentMatchMode = "private"; 
         ApagarTodosLosPaneles(); 
         if (_cachedMenuLobbyUI != null) _cachedMenuLobbyUI.ResetearLobbyCompleto();
@@ -176,20 +196,22 @@ public class MenuManager : MonoBehaviour
     // Al pulsar "Join" en pPrivate, venimos aquí:
     public void MostrarPrivateJoin() 
     { 
+        AudioManager.Instance?.PlayButtonGeneric();
         ApagarTodosLosPaneles(); 
         if (_cachedMenuLobbyUI != null) _cachedMenuLobbyUI.ResetearLobbyCompleto();
         if(panelPrivateJoin != null) panelPrivateJoin.SetActive(true); 
     }
     
     // Al pulsar "Create" (tras cargar la red), venimos aquí:
-    public void MostrarPrivateLobby() { ApagarTodosLosPaneles(); if(panelPrivateLobby != null) panelPrivateLobby.SetActive(true); if(bBack != null) bBack.gameObject.SetActive(false); if(pToolBar != null) pToolBar.SetActive(false); }
+    public void MostrarPrivateLobby() { AudioManager.Instance?.PlayButtonGeneric(); ApagarTodosLosPaneles(); if(panelPrivateLobby != null) panelPrivateLobby.SetActive(true); if(bBack != null) bBack.gameObject.SetActive(false); if(pToolBar != null) pToolBar.SetActive(false); }
     
     // Al pulsar "Join" (tras buscar el código), venimos aquí:
-    public void MostrarClientLobby() { ApagarTodosLosPaneles(); if(panelClientLobby != null) panelClientLobby.SetActive(true); if(bBack != null) bBack.gameObject.SetActive(false); if(pToolBar != null) pToolBar.SetActive(false); } 
+    public void MostrarClientLobby() { AudioManager.Instance?.PlayButtonGeneric(); ApagarTodosLosPaneles(); if(panelClientLobby != null) panelClientLobby.SetActive(true); if(bBack != null) bBack.gameObject.SetActive(false); if(pToolBar != null) pToolBar.SetActive(false); } 
 
     private void ApagarTodosLosPaneles()
     {
         if (panelHub != null) panelHub.SetActive(false);
+        if (extraHubOverlay != null) extraHubOverlay.SetActive(false);
         if (panelProfile != null) panelProfile.SetActive(false);
         if (panelShop != null) panelShop.SetActive(false);
         if (panelPractice != null) panelPractice.SetActive(false);
@@ -204,13 +226,37 @@ public class MenuManager : MonoBehaviour
 
     public void CalcularPremioPractica()
     {
-        if (practicePlayers == null || textoPremioPractica == null) return;
+        if (practicePlayers == null || practiceTime == null || practiceBotAI == null || textoPremioPractica == null) return;
 
         int premioBase = 50;
-        int bonusJugadores = practicePlayers.ObtenerIndice() * 20;
+        
+        // Bonus por Jugadores: 2 jugadores (+0), 3 jugadores (+35), 4 (+70), 5 (+105), 6 (+140)
+        int bonusJugadores = practicePlayers.ObtenerIndice() * 35;
+        
+        // Bonus por Tiempo de Turno: 5s (+80), 10s (+40), 15s (0), 20s (-30)
         int idxTiempo = practiceTime.ObtenerIndice();
-        int bonusTiempo = (2 - idxTiempo) * 30;
-        int bonusIA = practiceBotAI.ObtenerIndice() * 50;
+        int bonusTiempo = idxTiempo switch
+        {
+            0 => 80,  // 5s
+            1 => 40,  // 10s
+            2 => 0,   // 15s
+            3 => -30, // 20s
+            _ => 0
+        };
+        
+        // Bonus por Dificultad de la IA: escala no lineal y progresiva de bot
+        int dificultadBot = practiceBotAI.ObtenerIndice();
+        int bonusIA = dificultadBot switch
+        {
+            0 => 0,   // Ultra Easy
+            1 => 30,  // Easy
+            2 => 80,  // Normal
+            3 => 180, // Difficult
+            4 => 320, // Hard
+            5 => 500, // UltraHard
+            6 => 750, // Impossible
+            _ => 0
+        };
 
         int premioTotal = premioBase + bonusJugadores + bonusTiempo + bonusIA;
         textoPremioPractica.text = premioTotal.ToString();
@@ -221,6 +267,7 @@ public class MenuManager : MonoBehaviour
     // =======================================================
     public void IniciarPartidaPractica()
     {
+        AudioManager.Instance?.PlayButtonAction();
         // 1. Extraemos los valores de los selectores de la UI
         int maxJugadores = practicePlayers.ObtenerIndice() + 2; // +2 porque el índice 0 equivale a 1v1 (2 jugadores)
         int dificultadBot = practiceBotAI.ObtenerIndice();
@@ -233,7 +280,40 @@ public class MenuManager : MonoBehaviour
         GameConfig.difficulty = dificultadBot;
         GameConfig.turnTime = turnTime;
 
-        Debug.Log($"[PRÁCTICA] Iniciando Host Local: {maxJugadores} Jugadores, Dificultad IA: {dificultadBot}, Tiempo Turno: {turnTime}s");
+        // --- CORRECCIÓN DE ECONOMÍA DE PRÁCTICA Y PREMIO ---
+        int premioBase = 50;
+        int bonusJugadores = practicePlayers.ObtenerIndice() * 35;
+        
+        int idxTiempo = practiceTime.ObtenerIndice();
+        int bonusTiempo = idxTiempo switch
+        {
+            0 => 80,  // 5s
+            1 => 40,  // 10s
+            2 => 0,   // 15s
+            3 => -30, // 20s
+            _ => 0
+        };
+
+        int bonusIA = dificultadBot switch
+        {
+            0 => 0,   // Ultra Easy
+            1 => 30,  // Easy
+            2 => 80,  // Normal
+            3 => 180, // Difficult
+            4 => 320, // Hard
+            5 => 500, // UltraHard
+            6 => 750, // Impossible
+            _ => 0
+        };
+
+        GameConfig.currentPrize = premioBase + bonusJugadores + bonusTiempo + bonusIA;
+        GameConfig.currentFee = 0; // Sin coste de entrada en Práctica
+        GameConfig.currentMatchMode = "practice";
+        GameConfig.isPrivateMatch = false;
+        GameConfig.isHostLobby = false;
+        GameConfig.prizeAwarded = false;
+
+        Debug.Log($"[PRÁCTICA] Iniciando Host Local: {maxJugadores} Jugadores, Dificultad IA: {dificultadBot}, Premio Calculado: {GameConfig.currentPrize} Monedas");
 
         // 3. Arrancamos el motor de red en modo HOST y cargamos la escena directamente
         if (Unity.Netcode.NetworkManager.Singleton != null)
@@ -260,6 +340,7 @@ public class MenuManager : MonoBehaviour
     // =======================================================
     public async void IntentarMatchmaking()
     {
+        AudioManager.Instance?.PlayButtonAction();
         int feeMatchmaking = 200; // El coste fijo por entrar a partidas públicas
 
         if (TopBarUI.Instance != null && !TopBarUI.Instance.TieneSuficientes(feeMatchmaking))

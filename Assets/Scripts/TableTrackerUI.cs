@@ -115,11 +115,11 @@ public class TableTrackerUI : MonoBehaviour
     {
         return suit switch
         {
-            "Corazones" => "❤️",
-            "Diamantes" => "♦️",
-            "Picas"     => "♠️",
-            "Tréboles"  => "♣️",
-            _           => "🃏"
+            "Corazones" => "♥",
+            "Diamantes" => "♦",
+            "Picas"     => "♠",
+            "Tréboles"  => "♣",
+            _           => ""
         };
     }
 

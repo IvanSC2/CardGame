@@ -72,6 +72,7 @@ public class MenuLobbyUI : MonoBehaviour
 
         btnStartHost.onClick.AddListener(() =>
         {
+            AudioManager.Instance?.PlayButtonAction();
             if (NetworkManager.Singleton.SceneManager == null)
             {
                 Debug.LogError("Error: El SceneManager sigue siendo NULL.");
@@ -176,6 +177,7 @@ public class MenuLobbyUI : MonoBehaviour
                     // porque este path puede dispararse ANTES de que el timer llegue a 0
                     GameConfig.nPlayers = session.Players.Count;
                     GameConfig.nHumanPlayers = session.Players.Count;
+                    GameConfig.currentPrize = GameConfig.currentFee * session.Players.Count;
                     if (CardDatabase.deck != null) CardDatabase.deck.Clear();
                     StartCoroutine(EsperarConexionesYCargar(conexionesFisicas));
                 }
@@ -336,7 +338,7 @@ public class MenuLobbyUI : MonoBehaviour
 
                     // MONETIZACIÓN: Partida pública auto-start
                     GameConfig.currentFee = 200; // El feeMatchmaking hardcodeado en MenuManager
-                    GameConfig.currentPrize = 200 * 4;
+                    GameConfig.currentPrize = GameConfig.currentFee * conectadosNube;
                     GameConfig.isPrivateMatch = false;
                     GameConfig.isHostLobby = true; // Somos el Host de esta pública
                     GameConfig.prizeAwarded = false;
@@ -358,6 +360,7 @@ public class MenuLobbyUI : MonoBehaviour
 
     private async System.Threading.Tasks.Task CrearSalaPrivadaDesdeUIAsync()
     {
+        AudioManager.Instance?.PlayButtonAction();
         // 1. CANDADO LÓGICO: Si ya está creando una, ignoramos más clics
         if (procesandoPeticionRed) return; 
         // 2. EXTRAER COSTES Y VALIDAR ECONOMÍA ANTES DE NADA
@@ -429,6 +432,7 @@ public class MenuLobbyUI : MonoBehaviour
 
     private async System.Threading.Tasks.Task OnSearchClickedAsync()
     {
+        AudioManager.Instance?.PlayButtonAction();
         string codigo = inputCodigoAmigo.text.Trim().ToUpper();
         if (string.IsNullOrEmpty(codigo)) return;
 
@@ -479,6 +483,7 @@ public class MenuLobbyUI : MonoBehaviour
 
     private async System.Threading.Tasks.Task OnJoinConfirmedAsync()
     {
+        AudioManager.Instance?.PlayButtonAction();
         btnJoin.interactable = false;
         bBack.gameObject.SetActive(false);
         LoadingManager.Instance?.MostrarCargando("Uniéndose...");
@@ -625,6 +630,7 @@ public class MenuLobbyUI : MonoBehaviour
 
 public void AbandonarLobby()
 {
+    AudioManager.Instance?.PlayButtonAction();
     tiempoEsperaArranque = 5f; // Reset explícito para que el próximo matchmaking empiece limpio
     _ = AbandonarLobbyAsync();
 }

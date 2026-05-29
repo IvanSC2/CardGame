@@ -1,0 +1,57 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &3901159641111604637
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2349688224381234567}
+  - component: {fileID: 36450326000978472}
+  m_Layer: 0
+  m_Name: ThemeManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2349688224381234567
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3901159641111604637}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 896.7928, y: 405.8825, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &36450326000978472
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3901159641111604637}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e6299145bdb6fe945a8fc96f3ea824fa, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::UIThemeManager
+  cPrimario: {r: 0.957, g: 0.765, b: 0.357, a: 1}
+  cAlerta: {r: 0.878, g: 0.275, b: 0.169, a: 1}
+  cFondoOscuro: {r: 0.09, g: 0.376, b: 0.259, a: 1}
+  cAcento: {r: 0.847, g: 0.478, b: 0.161, a: 1}
+  cFondoTapete: {r: 0.06, g: 0.25, b: 0.17, a: 1}
+  fuenteTitulos: {fileID: 11400000, guid: e6c341d53cde91b44a270434b91ace2b, type: 2}
+  fuenteCuerpo: {fileID: 11400000, guid: e6c341d53cde91b44a270434b91ace2b, type: 2}
+  spriteBotonPrimario: {fileID: 0}
+  spriteBotonSecundario: {fileID: 0}
+  spriteBotonGrande: {fileID: 0}
+  spritePanelMarcador: {fileID: 0}

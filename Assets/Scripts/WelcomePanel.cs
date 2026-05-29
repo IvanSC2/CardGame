@@ -172,9 +172,10 @@ public class WelcomePanel : MonoBehaviour
     // =====================================================================
     private async void OnConfirmClicked()
     {
+        AudioManager.Instance?.PlayButtonAction();
         if (isProcessing) return;
         isProcessing = true;
-
+        
         if (btnConfirm != null) btnConfirm.interactable = false;
         
         if (isLoginMode)
@@ -212,6 +213,7 @@ public class WelcomePanel : MonoBehaviour
             {
                 if (txtFeedback != null) txtFeedback.text = error;
                 isProcessing = false;
+                if (btnConfirm != null) btnConfirm.interactable = true;
                 return;
             }
 
@@ -247,6 +249,7 @@ public class WelcomePanel : MonoBehaviour
 
     private void ToggleMode()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         isLoginMode = !isLoginMode;
         ActualizarVistaModo();
     }
@@ -257,10 +260,10 @@ public class WelcomePanel : MonoBehaviour
         if (containerLogin != null) containerLogin.SetActive(isLoginMode);
 
         if (txtToggleMode != null)
-            txtToggleMode.text = isLoginMode ? "¿No tienes cuenta? Juega como Invitado" : "Ya tengo cuenta (Recuperar)";
+            txtToggleMode.text = isLoginMode ? "Jugar como\nInvitado" : "Ya tengo\ncuenta";
             
         if (txtConfirmBtn != null)
-            txtConfirmBtn.text = isLoginMode ? "Iniciar Sesión" : "Comenzar Aventura";
+            txtConfirmBtn.text = isLoginMode ? "Iniciar\nSesion" : "Comenzar";
 
         if (txtFeedback != null) txtFeedback.text = "";
 

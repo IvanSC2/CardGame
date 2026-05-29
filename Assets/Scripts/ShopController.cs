@@ -43,21 +43,28 @@ public class ShopController : MonoBehaviour, IStoreListener
 
     //BOTONES DE LA TIENDA
 
-    // Botones de pago 
     public void ComprarProducto(string idProducto)
     {
+        AudioManager.Instance?.PlayButtonGeneric();
+        
+        if (idProducto == id_remove_ads && PlayerPrefs.GetInt("NoAds", 0) == 1)
+        {
+            if (MenuManager.Instance != null)
+                MenuManager.Instance.MostrarPopupInfo("Ya eres usuario Premium");
+            return;
+        }
+
         idProductoPendiente = idProducto;
         panelConfirmacion.SetActive(true); 
     }
 
-    // Botón Aceptar de tu panel
     public void ConfirmarCompra()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         panelConfirmacion.SetActive(false);
 
-#if UNITY_EDITOR
-        // --- MODO ORDENADOR: Bypass directo ---
-        Debug.Log($"Simulando compra en PC: {idProductoPendiente}");
+        // --- MODO SIMULACIÓN PARA EVALUACIÓN ---
+        Debug.Log($"Simulando compra en dispositivo: {idProductoPendiente}");
         
         if (idProductoPendiente == id_10k) EntregarPremio(10000);
         else if (idProductoPendiente == id_18k) EntregarPremio(18000);
@@ -66,29 +73,24 @@ public class ShopController : MonoBehaviour, IStoreListener
         else if (idProductoPendiente == id_250k) EntregarPremio(250000);
         else if (idProductoPendiente == id_750k) EntregarPremio(750000);
         else if (idProductoPendiente == id_remove_ads) ActivarNoAds();
+        else Debug.LogError($"[TIENDA] Error: El ID '{idProductoPendiente}' no existe. Revisa el texto escrito en el OnClick del botón en Unity.");
         
-        // ANALÍTICAS: Evento purchase_completed (Funnel 2, paso 3)
-        if (AnalyticsManager.Instance != null) AnalyticsManager.Instance.EventoPurchaseCompleted(idProductoPendiente);
+        // ANALÍTICAS: Evento purchase_completed
+        if (AnalyticsManager.Instance != null && !string.IsNullOrEmpty(idProductoPendiente)) AnalyticsManager.Instance.EventoPurchaseCompleted(idProductoPendiente);
 
         idProductoPendiente = "";
-#else
-        // MODO MÓVIL
-        if (m_StoreController != null)
-        {
-            m_StoreController.InitiatePurchase(idProductoPendiente);
-        }
-#endif
     }
 
-    // Botón Cancelar de tu panel
     public void CancelarCompra()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         idProductoPendiente = "";
         panelConfirmacion.SetActive(false);
     }
 
     public void VerAnuncioGratis()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         if (AdManager.Instance != null) {
             AdManager.Instance.MostrarAnuncioRecompensado();
         }
@@ -116,6 +118,7 @@ public class ShopController : MonoBehaviour, IStoreListener
 
     private void EntregarPremio(int cantidad)
     {
+        AudioManager.Instance?.PlayShopSuccess();
         if (TopBarUI.Instance != null)
         {
             TopBarUI.Instance.ActualizarMonedas(cantidad);
@@ -126,6 +129,7 @@ public class ShopController : MonoBehaviour, IStoreListener
 {
     try 
     {
+        AudioManager.Instance?.PlayShopSuccess();
         // 1. Guardamos localmente para que el efecto sea instantáneo
         PlayerPrefs.SetInt("NoAds", 1);
         

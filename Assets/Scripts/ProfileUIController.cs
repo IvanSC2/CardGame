@@ -112,6 +112,13 @@ public class ProfileUIController : MonoBehaviour
         // Al encender pProfile, mostramos el botón bEditProfile automáticamente
         if (bEditProfile != null) bEditProfile.gameObject.SetActive(true);
 
+        // Convertir el input de contraseña a tipo Password (asteriscos)
+        if (inputPassword != null) 
+        {
+            inputPassword.contentType = TMP_InputField.ContentType.Password;
+            inputPassword.ForceLabelUpdate();
+        }
+
         ConfigurarBotones();
         CargarDatosDelPerfil();
         MostrarEstadisticas(); // Por defecto, mostrar stats
@@ -197,7 +204,10 @@ public class ProfileUIController : MonoBehaviour
         if (btnCancelSync != null)
         {
             btnCancelSync.onClick.RemoveAllListeners();
-            btnCancelSync.onClick.AddListener(() => { if (panelSyncAccount != null) panelSyncAccount.SetActive(false); });
+            btnCancelSync.onClick.AddListener(() => { 
+                if (panelSyncAccount != null) panelSyncAccount.SetActive(false); 
+                MenuManager.Instance?.MostrarPerfil();
+            });
         }
         if (btnCancelDelete != null)
         {
@@ -297,12 +307,35 @@ public class ProfileUIController : MonoBehaviour
     // =====================================================================
     private void ToggleEditPanel()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         if (backProfilePanel != null)
-            backProfilePanel.SetActive(!backProfilePanel.activeSelf);
+        {
+            bool willBeActive = !backProfilePanel.activeSelf;
+            backProfilePanel.SetActive(willBeActive);
+            
+            // Ocultar las otras secciones mientras editamos el perfil
+            if (backStatsPanel != null) backStatsPanel.SetActive(!willBeActive);
+            
+            if (willBeActive)
+            {
+                // Si abrimos la edición, forzamos apagar también los contenedores internos
+                if (statsContainer != null) statsContainer.SetActive(false);
+                if (gameHistoryPanel != null) gameHistoryPanel.SetActive(false);
+            }
+            else
+            {
+                // Si cerramos la edición, volvemos a mostrar la pestaña en la que estábamos
+                MostrarEstadisticas();
+            }
+        }
     }
 
     private void MostrarEstadisticas()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
+        if (backProfilePanel != null) backProfilePanel.SetActive(false);
+        if (backStatsPanel != null) backStatsPanel.SetActive(true);
+        
         if (statsContainer != null) statsContainer.SetActive(true);
         if (gameHistoryPanel != null) gameHistoryPanel.SetActive(false);
         AplicarFiltro(filtroActivo);
@@ -310,6 +343,10 @@ public class ProfileUIController : MonoBehaviour
 
     private void MostrarHistorial()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
+        if (backProfilePanel != null) backProfilePanel.SetActive(false);
+        if (backStatsPanel != null) backStatsPanel.SetActive(true);
+        
         if (statsContainer != null) statsContainer.SetActive(false);
         if (gameHistoryPanel != null) gameHistoryPanel.SetActive(true);
         PoblarHistorial();
@@ -320,6 +357,7 @@ public class ProfileUIController : MonoBehaviour
     // =====================================================================
     private void AplicarFiltro(string modo)
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         filtroActivo = modo;
         if (ProfileManager.Instance == null || txtStatsContent == null) return;
 
@@ -431,6 +469,7 @@ public class ProfileUIController : MonoBehaviour
     // =====================================================================
     private void AbrirCambioNombre()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         if (panelChangeName == null) return;
         panelChangeName.SetActive(!panelChangeName.activeSelf);
         if (panelSyncAccount != null) panelSyncAccount.SetActive(false);
@@ -442,6 +481,7 @@ public class ProfileUIController : MonoBehaviour
 
     private async void ConfirmarCambioNombre()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         if (ProfileManager.Instance == null || inputNewName == null) return;
 
         string nuevoNombre = inputNewName.text.Trim();
@@ -488,6 +528,7 @@ public class ProfileUIController : MonoBehaviour
     // =====================================================================
     private void AbrirSelectorAvatar()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         // En Editor: usamos un diálogo nativo de archivo
         // En Mobile: necesitarías NativeGallery (plugin externo) 
         // Por ahora usamos una implementación que funciona en el editor
@@ -500,10 +541,14 @@ public class ProfileUIController : MonoBehaviour
             ProcesarImagenAvatar(path);
         }
 #else
-        // En builds reales, copiaríamos a persistentDataPath y cargaríamos
-        // Para que funcione en móvil, integra NativeGallery:
-        // NativeGallery.GetImageFromGallery((path) => { ProcesarImagenAvatar(path); });
-        Debug.Log("[PERFIL] Selector de galería no disponible en esta plataforma. Integra NativeGallery.");
+        // Móvil: Usar NativeGallery
+        NativeGallery.GetImageFromGallery((path) =>
+        {
+            if (!string.IsNullOrEmpty(path))
+            {
+                ProcesarImagenAvatar(path);
+            }
+        }, "Selecciona tu Avatar", "image/*");
 #endif
     }
 
@@ -548,6 +593,7 @@ public class ProfileUIController : MonoBehaviour
     // =====================================================================
     private void AbrirVinculacion()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         if (panelSyncAccount == null) return;
         panelSyncAccount.SetActive(!panelSyncAccount.activeSelf);
         if (panelChangeName != null) panelChangeName.SetActive(false);
@@ -560,6 +606,7 @@ public class ProfileUIController : MonoBehaviour
 
     private async void ConfirmarVinculacion()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         if (ProfileManager.Instance == null) return;
 
         string username = inputEmail != null ? inputEmail.text.Trim() : "";
@@ -638,6 +685,7 @@ public class ProfileUIController : MonoBehaviour
     // =====================================================================
     private void AbrirBorrado()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         if (panelDeleteAccount == null) return;
         panelDeleteAccount.SetActive(!panelDeleteAccount.activeSelf);
         if (panelChangeName != null) panelChangeName.SetActive(false);
@@ -652,6 +700,7 @@ public class ProfileUIController : MonoBehaviour
 
     private async void ConfirmarBorradoReal()
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         if (btnConfirmDelete != null) btnConfirmDelete.interactable = false;
         if (txtDeleteFeedback != null)
         {

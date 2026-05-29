@@ -29,7 +29,12 @@ public class LoadingManager : MonoBehaviour
                     c = gameObject.AddComponent<Canvas>();
                     c.renderMode = RenderMode.ScreenSpaceOverlay;
                     c.sortingOrder = 999; // Por encima de todo
-                    gameObject.AddComponent<UnityEngine.UI.CanvasScaler>();
+                    
+                    var scaler = gameObject.AddComponent<UnityEngine.UI.CanvasScaler>();
+                    scaler.uiScaleMode = UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize;
+                    scaler.referenceResolution = new Vector2(1920, 1080);
+                    scaler.matchWidthOrHeight = 0.5f;
+                    
                     gameObject.AddComponent<UnityEngine.UI.GraphicRaycaster>();
                 }
                 
@@ -67,6 +72,7 @@ public class LoadingManager : MonoBehaviour
 
     public void MostrarCargando(string mensaje = "Cargando...")
     {
+        AudioManager.Instance?.musicSource.Pause();
         if (pLoadingScreen == null) return;
         
         if (txtLoadingMessage != null)
@@ -78,6 +84,7 @@ public class LoadingManager : MonoBehaviour
 
     public void OcultarCargando()
     {
+        AudioManager.Instance?.musicSource.UnPause();
         if (pLoadingScreen == null) return;
         
         pLoadingScreen.SetActive(false);

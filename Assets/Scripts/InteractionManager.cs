@@ -89,6 +89,9 @@ public class InteractionManager : NetworkBehaviour
     {
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
+        
+        AudioManager.Instance?.PlayGameMusic();
+
         GameConfig.gameStarted = true;
         GameConfig.trophyAwarded = false; // Resetear trofeos para esta partida
         GameConfig.trophyBote = 0;        // Resetear bote de trofeos
@@ -113,7 +116,7 @@ public class InteractionManager : NetworkBehaviour
         }
 
         // ANTI-RAGEQUIT FLAG: Registrar que la partida empezó para castigar cierres por deslizamiento en móvil
-        if (!GameConfig.isPrivateMatch)
+        if (GameConfig.currentMatchMode == "public")
         {
             PlayerPrefs.SetInt("PartidaEnCurso", 1);
             int ultimoPuesto = Mathf.Clamp(GameConfig.nPlayers - 1, 0, GameConfig.trophyDeltaByRank.Length - 1);
@@ -431,6 +434,9 @@ public class InteractionManager : NetworkBehaviour
         SetInfoMessage($"<color=#FF5555><b>{nombreReal}</b></color> se ha desconectado.", 5f);
         ActualizarTodosLosPerfilesUI();
 
+        // Si ya estamos en GameOver (por TerminarPartidaPorAbandonoClientRpc u otro motivo), no hacer nada más
+        if (PauseManager.Instance != null && PauseManager.Instance.isGameOver) return;
+
         // Cada cliente comprueba si, al irse este, él se ha quedado solo en la sala
         int humanosVivos = 0;
         for (int i = 0; i < totalPlayers; i++)
@@ -480,6 +486,9 @@ public class InteractionManager : NetworkBehaviour
         ActualizarTodosLosPerfilesUI();
 
         LoadingManager.Instance?.OcultarCargando();
+
+        // Avisamos al servidor de que este cliente ha cargado la mesa en 3D
+        ClientReadyForFirstRoundServerRpc();
     }
 
     private void ArrancarMesaLocal(int numJugadores)
@@ -526,6 +535,43 @@ public class InteractionManager : NetworkBehaviour
         }
     }
 
+    private int _clientsReadyForFirstRound = 0;
+    private bool _firstRoundStarted = false;
+
+    [Rpc(SendTo.Server)]
+    public void ClientReadyForFirstRoundServerRpc()
+    {
+        _clientsReadyForFirstRound++;
+        CheckFirstRoundStart();
+    }
+
+    private void CheckFirstRoundStart()
+    {
+        if (!_firstRoundStarted && IsServer)
+        {
+            int requiredHumans = NetworkManager.Singleton.ConnectedClientsIds.Count;
+            if (_clientsReadyForFirstRound >= requiredHumans)
+            {
+                _firstRoundStarted = true;
+                StartCoroutine(EsperarYRepartirPrimeraRonda());
+            }
+        }
+    }
+
+    private IEnumerator EsperarYRepartirPrimeraRonda()
+    {
+        // Esperamos 1.5 segundos para asegurarnos de que HandLayoutFanner
+        // ha terminado su Invoke("ReorganizarCartas", 0.1f) en todos los clientes
+        // antes de repartir las cartas por red.
+        yield return new WaitForSeconds(1.5f);
+        if (HandTester.Instance != null)
+        {
+            Debug.Log("[GAME LOOP] Todos los clientes listos. Iniciando primera ronda.");
+            HandTester.Instance.DrawNewHand();
+        }
+    }
+
+
     public IEnumerator StartNewRoundServer()
     {
         if (!IsServer) yield break;
@@ -533,14 +579,26 @@ public class InteractionManager : NetworkBehaviour
         Debug.Log("[GAME LOOP] Iniciando nueva ronda. Esperando 3 segundos...");
         yield return new WaitForSeconds(3.0f);
         
-        if (HandTester.Instance != null)
+        // Solo repartimos aquí si ya se jugó al menos una ronda (rondas 2, 3, 4...).
+        // La PRIMERA ronda es manejada exclusivamente por EsperarYRepartirPrimeraRonda()
+        // a través del sistema ClientReadyForFirstRoundServerRpc.
+        if (rondasJugadasTotales > 0)
         {
-            Debug.Log("[GAME LOOP] Llamando a DrawNewHand automáticamente.");
-            HandTester.Instance.DrawNewHand();
+            if (HandTester.Instance != null)
+            {
+                Debug.Log("[GAME LOOP] Llamando a DrawNewHand automáticamente (ronda " + rondasJugadasTotales + ").");
+                HandTester.Instance.DrawNewHand();
+            }
+            else
+            {
+                Debug.LogError("[GAME LOOP] HandTester.Instance es NULL!");
+            }
         }
         else
         {
-            Debug.LogError("[GAME LOOP] HandTester.Instance es NULL!");
+            // Primera ronda: nos aseguramos de que el sistema de RPC arranque
+            // en caso de que los clientes ya estén listos.
+            CheckFirstRoundStart();
         }
     }
 

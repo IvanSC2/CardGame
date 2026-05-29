@@ -73,8 +73,8 @@ public class TopBarUI : MonoBehaviour
             }
             else
             {
-                trofeosActuales = 100;
-                Debug.Log("[TROFEOS] Jugador nuevo. Asignando 100 trofeos de regalo.");
+                trofeosActuales = 0;
+                Debug.Log("[TROFEOS] Jugador nuevo. Asignando 0 trofeos por defecto.");
             }
 
             economiaCargada = true;
@@ -105,7 +105,7 @@ public class TopBarUI : MonoBehaviour
             if (pendingTrofeos != 0 || pendingMonedas != 0)
             {
                 trofeosActuales = Mathf.Max(0, trofeosActuales + pendingTrofeos);
-                monedasActuales += pendingMonedas;
+                monedasActuales = Mathf.Max(0, monedasActuales + pendingMonedas);
                 PlayerPrefs.SetInt("PendingTrophyDelta", 0);
                 PlayerPrefs.SetInt("PendingCoinDelta", 0);
                 PlayerPrefs.Save();
@@ -133,7 +133,7 @@ public class TopBarUI : MonoBehaviour
             return;
         }
 
-        monedasActuales += cantidadASumar;
+        monedasActuales = Mathf.Max(0, monedasActuales + cantidadASumar);
         ActualizarPantalla();
         await GuardarEconomiaNube();
     }

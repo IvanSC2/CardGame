@@ -150,6 +150,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
     [Rpc(SendTo.Everyone)]
     private void JugarCartaMesaClientRpc(int playerIndex, int indexCartaEnMano)
     {
+        AudioManager.Instance?.PlaySFX(AudioManager.Instance?.cardDrop);
         if (playerIndex >= InteractionManager.Instance.playerHands.Count) return;
         Transform manoOriginal = InteractionManager.Instance.playerHands[playerIndex].transform;
         if (indexCartaEnMano >= manoOriginal.childCount) return;
@@ -313,9 +314,14 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
                 InteractionManager.Instance.vidas[i]--; 
                 string nombreReal = InteractionManager.Instance.GetPlayerName(i);
                 if (i == InteractionManager.Instance.MySeatIndex)
+                {
+                    AudioManager.Instance?.PlaySFX(AudioManager.Instance?.loseLife);
                     mensajeResultado += $"<color=#FF5555>Has perdido 1 vida 💔</color>\n";
+                }
                 else
+                {
                     mensajeResultado += $"<color=#FF5555>{nombreReal} pierde 1 vida 💔</color>\n";
+                }
             }
 
             if (InteractionManager.Instance.vidas[i] > 0) jugadoresVivos++;
@@ -387,10 +393,10 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
         // contribuimos con los trofeos que pierde al bote, para que los supervivientes los recojan.
         if (GameConfig.currentMatchMode == "public" && puesto > 1 && !GameConfig.trophyAwarded)
         {
-            int indice = Mathf.Clamp(puesto - 1, 0, GameConfig.trophyDeltaByRank.Length - 1);
-            int trofeosPerdidos = Mathf.Abs(Mathf.Min(0, GameConfig.trophyDeltaByRank[indice]));
+            int totalPlayers = InteractionManager.Instance != null ? InteractionManager.Instance.totalPlayers : GameConfig.nPlayers;
+            int trofeosPerdidos = GameConfig.CalcularTrofeosPerdidos(puesto, totalPlayers);
             GameConfig.trophyBote += trofeosPerdidos;
-            Debug.Log($"[TROFEOS] Jugador muere en puesto {puesto}. Aporta {trofeosPerdidos} trofeos al bote. Bote total: {GameConfig.trophyBote}");
+            Debug.Log($"[TROFEOS SUMA-CERO] Jugador eliminado en puesto {puesto}/{totalPlayers}. Pierde y aporta {trofeosPerdidos} trofeos al bote. Bote total: {GameConfig.trophyBote}");
         }
 
         if (PauseManager.Instance != null)

@@ -183,18 +183,18 @@ public class TableManagerLayout : MonoBehaviour
                 }
                 else if (numJugadores == 5)
                 {
-                    if (visualIndex == 1) { perfilPosX = 1250f; perfilPosY = 300f; } 
+                    if (visualIndex == 1) { perfilPosX = 1400f; perfilPosY = 300f; } 
                     else if (visualIndex == 2) { perfilPosX = 700f; perfilPosY = 1600f; } 
                     else if (visualIndex == 3) { perfilPosX = -700f; perfilPosY = 1600f; } 
-                    else if (visualIndex == 4) { perfilPosX = -1250f; perfilPosY = 300f; } 
+                    else if (visualIndex == 4) { perfilPosX = -1400f; perfilPosY = 300f; } 
                 }
                 else if (numJugadores >= 6)
                 {
-                    if (visualIndex == 1) { perfilPosX = 1300f; perfilPosY = 150f; } 
+                    if (visualIndex == 1) { perfilPosX = 1400f; perfilPosY = 200f; } 
                     else if (visualIndex == 2) { perfilPosX = 1000f; perfilPosY = 1400f; } 
-                    else if (visualIndex == 3) { perfilPosX = 0f; perfilPosY = 1700f; } 
+                    else if (visualIndex == 3) { perfilPosX = 0f; perfilPosY = 1750f; } 
                     else if (visualIndex == 4) { perfilPosX = -1000f; perfilPosY = 1400f; } 
-                    else if (visualIndex == 5) { perfilPosX = -1300f; perfilPosY = 150f; } 
+                    else if (visualIndex == 5) { perfilPosX = -1400f; perfilPosY = 200f; } 
                 }
                 
                 rtPerfil.anchoredPosition = new Vector2(perfilPosX, perfilPosY);
@@ -217,9 +217,10 @@ public class TableManagerLayout : MonoBehaviour
             manosGeneradas[localId].transform.SetAsLastSibling();
         }
         
+        // Ponemos los perfiles primero para que se dibujen detrás de las barajas
         foreach(PlayerProfileUI perfil in perfilesActivos)
         {
-            perfil.transform.SetAsLastSibling();
+            perfil.transform.SetAsFirstSibling();
         }
     }
 }

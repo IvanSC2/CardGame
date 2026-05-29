@@ -166,21 +166,24 @@ public class BettingManager : NetworkBehaviour
         int miIdLocal = InteractionManager.Instance.MySeatIndex;
 
         // Texto informativo en la parte superior
-        if (apuestasRealizadas > 0)
+        if (titleText != null)
         {
-            int lastBetter = (turnoDe - 1 + InteractionManager.Instance.totalPlayers) % InteractionManager.Instance.totalPlayers;
-            int lastBet = InteractionManager.Instance.apuestas[lastBetter]; 
-            titleText.text = $"JUGADOR {lastBetter} APOSTÓ {lastBet}.";
-        }
-        else
-        {
-            titleText.text = "FASE DE APUESTAS";
+            if (apuestasRealizadas > 0)
+            {
+                int lastBetter = (turnoDe - 1 + InteractionManager.Instance.totalPlayers) % InteractionManager.Instance.totalPlayers;
+                int lastBet = InteractionManager.Instance.apuestas[lastBetter]; 
+                titleText.text = $"JUGADOR {lastBetter} APOSTÓ {lastBet}.";
+            }
+            else
+            {
+                titleText.text = "FASE DE APUESTAS";
+            }
         }
 
         //Mi turno
         if (turnoDe == miIdLocal)
         {
-            titleText.text += "\n¡ES TU TURNO!";
+            if (titleText != null) titleText.text += "\n¡ES TU TURNO!";
             
             // Activar solo los botones legales
             for (int i = 0; i < betButtons.Length; i++)
@@ -199,7 +202,7 @@ public class BettingManager : NetworkBehaviour
         else
         {
             // No me toca, o es un Bot
-            titleText.text += $"\nEsperando al Jugador {turnoDe}...";
+            if (titleText != null) titleText.text += $"\nEsperando al Jugador {turnoDe}...";
             DisableButtons();
         }
     }
@@ -235,6 +238,7 @@ public class BettingManager : NetworkBehaviour
     // ========================================================================
     private void IntentarApostar(int amount)
     {
+        AudioManager.Instance?.PlayButtonGeneric();
         DisableButtons(); // Ocultamos localmente al pulsar para evitar doble clic
         EnviarApuestaServerRpc(amount);
     }

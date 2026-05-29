@@ -40,4 +40,19 @@ public static class GameConfig
     // Si hay menos jugadores, se usan los índices desde el final del array
     // Ej. en partida de 2: 1º -> +30, 2º -> -20
     public static readonly int[] trophyDeltaByRank = { 30, 10, -10, -20, -25, -28 };
+
+    /// <summary>
+    /// Calcula dinámicamente cuántos trofeos pierde un jugador eliminado según el tamaño de la sala.
+    /// Diseñado para garantizar una economía de suma cero perfecta.
+    /// </summary>
+    public static int CalcularTrofeosPerdidos(int puesto, int totalPlayers)
+    {
+        bool esLoser = puesto > totalPlayers / 2;
+        if (!esLoser) return 0; // La mitad superior no pierde trofeos
+
+        int distanciaUltimo = totalPlayers - puesto;
+        if (distanciaUltimo == 0) return 20;     // Último puesto
+        if (distanciaUltimo == 1) return 15;     // Penúltimo puesto
+        return 10;                              // Antepenúltimo puesto (3º por la cola o superior si es de 6)
+    }
 }

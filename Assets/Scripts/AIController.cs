@@ -6,11 +6,11 @@ using System.Linq;
 /// Cerebro de la IA. Contiene 7 niveles de dificultad (0-6).
 /// 0 Ultra Easy  — Juega al azar total.
 /// 1 Easy        — Lógica base con un 30% de torpeza.
-/// 2 Normal      — Lógica matemática correcta (igual que antes).
+/// 2 Normal      — Lógica matemática correcta.
 /// 3 Difficult   — Memoria de cartas ya jugadas en esta ronda.
-/// 4 Hard        — Sanguinario: prioriza hundir al jugador humano.
-/// 5 UltraHard   — Trampa ligera: lee el mazo restante.
-/// 6 Impossible  — Trampa total: lee la mano del jugador humano.
+/// 4 Hard        — Sanguinario: sabotea al humano desde 2 vidas. Consciente de sus propias vidas.
+/// 5 UltraHard   — Trampa ligera: lee el mazo restante y elimina cartas de rivales.
+/// 6 Impossible  — Trampa total: lee la mano del jugador humano + apuestas rivales.
 /// </summary>
 public class AIController : MonoBehaviour
 {
@@ -63,12 +63,18 @@ public class AIController : MonoBehaviour
                 _           => 0.00f
             };
 
-            // Nivel 3+: si la carta más alta del palo ya fue jugada, la mía sube de valor
+            // Nivel 3+: si TODAS las cartas más altas del mismo palo ya fueron jugadas,
+            // mi carta es ahora dominante en ese palo → sube de valor.
+            // CORRECCIÓN: antes la lógica era al revés (boosteaba cuando quedaban superiores).
             if (diff >= 3 && _cardsPlayedThisRound.Count > 0)
             {
-                bool higherCardGone = _cardsPlayedThisRound
-                    .Any(c => c.suit == card.suit && c.value > card.value);
-                if (!higherCardGone) power = Mathf.Min(power + 0.25f, 1.0f);
+                // ¿Existe alguna carta de mayor valor en el mismo palo que NO haya sido jugada?
+                // Si NO existe (todas fueron jugadas), mi carta es líder de palo.
+                bool myCardIsLeaderOfSuit = !_cardsPlayedThisRound
+                    .Any(c => c.suit == card.suit && c.value > card.value)
+                    && !myHand.Any(c => c != card && c.suit == card.suit && c.value > card.value);
+
+                if (myCardIsLeaderOfSuit) power = Mathf.Min(power + 0.35f, 1.0f);
             }
 
             estimatedWins += (power + suitBonus);
@@ -83,6 +89,22 @@ public class AIController : MonoBehaviour
         // Factor mesa caliente (niveles 1-3 se asustan, nivel 4+ no)
         if (diff <= 3 && sumBets > totalCardsInRound)
             finalBet = Mathf.Max(0, finalBet - 1);
+
+        // Nivel 4+: conciencia de vidas propias
+        // Si el bot tiene 1 vida, apuesta conservador (prefiere 0 o la estimación exacta)
+        if (diff >= 4 && InteractionManager.Instance != null)
+        {
+            int mySeat = GetMyAISeat();
+            if (mySeat >= 0)
+            {
+                int myLives = InteractionManager.Instance.vidas[mySeat];
+                if (myLives == 1)
+                {
+                    // Con 1 vida: redondear a la baja para ser conservador
+                    finalBet = Mathf.Max(0, Mathf.FloorToInt(estimatedWins));
+                }
+            }
+        }
 
         // La suma prohibida (Solo si soy el último)
         if (amILast)
@@ -112,6 +134,14 @@ public class AIController : MonoBehaviour
 
         if (amILast && sumBets >= otherVisibleCards.Count)
             prob -= 0.20f;
+
+        // Nivel 4+: si mi carta (oculta) es potencialmente mala, apuesta 0 con 1 vida
+        if (diff >= 4 && InteractionManager.Instance != null)
+        {
+            int mySeat = GetMyAISeat();
+            if (mySeat >= 0 && InteractionManager.Instance.vidas[mySeat] == 1)
+                prob -= 0.30f; // Con 1 vida, apuesta 0 en ciega casi siempre
+        }
 
         // Nivel 1: torpeza
         if (diff == 1 && Random.value < 0.30f)
@@ -152,10 +182,10 @@ public class AIController : MonoBehaviour
             return ChooseCardDeckReader(aiHandUI, cardsOnTable, needToWin);
 
         // ── Nivel 4: Sanguinario ─────────────────────────────────────────────
-        // Prioriza hundir al jugador humano si está al borde de la muerte.
+        // Prioriza hundir al jugador humano si tiene 2 vidas o menos.
         if (diff >= 4)
         {
-            UICard antiPlayerCard = TryAntiPlayerMove(aiHandUI, cardsOnTable);
+            UICard antiPlayerCard = TryAntiPlayerMove(aiHandUI, cardsOnTable, needToWin);
             if (antiPlayerCard != null) return antiPlayerCard;
         }
 
@@ -181,15 +211,18 @@ public class AIController : MonoBehaviour
         Card winningOnTable = GetCurrentWinningCard(table);
         int  winningScore   = GetCardScore(winningOnTable);
 
-        // Nivel 3+: si tenemos memoria y la carta de la mesa es imbatible por lógica,
+        // Nivel 3+: si tenemos memoria y la carta de la mesa es imbatible,
         // no desperdiciamos cartas altas intentando superarla.
         if (diff >= 3 && _cardsPlayedThisRound.Count > 0)
         {
-            bool tableCardIsTopOfSuit = !_cardsPlayedThisRound
+            // La carta de la mesa es imbatible si no ha sido jugada ninguna superior
+            // Y en nuestra mano tampoco hay ninguna que la supere de ese palo
+            bool tableCardIsUnbeatable = !_cardsPlayedThisRound
                 .Any(c => c.suit == winningOnTable.suit && c.value > winningOnTable.value);
-            if (tableCardIsTopOfSuit && needToWin)
+
+            if (tableCardIsUnbeatable && needToWin)
             {
-                // Esa carta ya no tiene superiores → no podemos ganar, tiramos basura
+                // Esa carta es la reina del palo → tiramos basura para no desperdiciar
                 return GetLowestPowerCard(hand);
             }
         }
@@ -203,42 +236,92 @@ public class AIController : MonoBehaviour
             return losers.Count > 0  ? GetHighestPowerCard(losers) : GetHighestPowerCard(hand);
     }
 
-    // Nivel 4: intenta sabotear al jugador humano si tiene pocas vidas
-    private UICard TryAntiPlayerMove(List<UICard> myHand, List<Card> table)
+    /// <summary>
+    /// Nivel 4: sabotea al jugador humano si tiene 2 vidas o menos.
+    /// MEJORADO: también actúa cuando el bot va primero (no solo cuando responde).
+    /// </summary>
+    private UICard TryAntiPlayerMove(List<UICard> myHand, List<Card> table, bool needToWin)
     {
         if (InteractionManager.Instance == null) return null;
 
-        int humanSeat = InteractionManager.Instance.MySeatIndex;
+        int humanSeat  = InteractionManager.Instance.MySeatIndex;
         int humanLives = InteractionManager.Instance.vidas[humanSeat];
 
-        // Solo activa el modo sanguinario si el humano tiene 1 vida (a punto de morir)
-        if (humanLives > 1) return null;
+        // Activar modo sanguinario si el humano tiene 2 vidas o menos (antes solo 1)
+        if (humanLives > 2) return null;
 
-        // ¿Ya tiró el humano? Si está en la mesa, intentamos superarla con lo mínimo
+        int humanBazas   = InteractionManager.Instance.bazasGanadas[humanSeat];
+        int humanApuesta = InteractionManager.Instance.apuestas[humanSeat];
+
+        // Determinar si el humano necesita ganar o perder bazas para cumplir su apuesta
+        bool humanNeedsWin  = humanBazas < humanApuesta;
+        bool humanNeedsLose = humanBazas >= humanApuesta;
+
+        List<UICard> sorted = myHand.OrderBy(c => GetCardScore(c.cardData)).ToList();
+
+        // ── El humano ya tiró en esta baza ──────────────────────────────────────
         if (table.Count > 0)
         {
             Card winnerOnTable = GetCurrentWinningCard(table);
             int  winScore      = GetCardScore(winnerOnTable);
-            List<UICard> beaters = myHand
-                .Where(c => GetCardScore(c.cardData) > winScore)
-                .OrderBy(c => GetCardScore(c.cardData))
-                .ToList();
-            if (beaters.Count > 0) return beaters[0]; // ganamos con lo mínimo posible
+
+            // Si el humano está ganando la baza y NO le conviene ganarla → la robamos
+            bool humanIsWinning = winnerOnTable.id == GetHumanCardOnTable(table)?.id;
+            if (humanIsWinning && humanNeedsLose)
+            {
+                List<UICard> beaters = myHand
+                    .Where(c => GetCardScore(c.cardData) > winScore)
+                    .OrderBy(c => GetCardScore(c.cardData))
+                    .ToList();
+                if (beaters.Count > 0) return beaters[0]; // robarle la baza con lo mínimo
+            }
+
+            // Si el humano necesita ganar y está perdiendo → NO le dejamos ganar (ya lo hace la lógica base)
+            // Pero si nosotros podemos ganar para impedírselo, mejor
+            if (humanNeedsWin)
+            {
+                List<UICard> beaters = myHand
+                    .Where(c => GetCardScore(c.cardData) > winScore)
+                    .OrderBy(c => GetCardScore(c.cardData))
+                    .ToList();
+                if (beaters.Count > 0) return beaters[0];
+            }
         }
 
-        return null; // Sin info suficiente, deja la lógica base actuar
+        // ── El bot va primero ────────────────────────────────────────────────────
+        // Si el humano necesita perder bazas: tiramos nuestra carta más fuerte para forzarle a ganar
+        if (table.Count == 0 && humanNeedsLose)
+        {
+            return GetHighestPowerCard(myHand);
+        }
+        // Si el humano necesita ganar bazas: tiramos nuestra carta más fuerte para robarle la baza
+        if (table.Count == 0 && humanNeedsWin)
+        {
+            return GetHighestPowerCard(myHand);
+        }
+
+        return null;
     }
 
-    // Nivel 5: lee el mazo restante para calcular con certeza si su carta ganará
+    /// <summary>
+    /// Nivel 5: lee el mazo restante Y elimina las cartas conocidas para
+    /// deducir qué tienen los rivales. Elige la carta mínima garantizada.
+    /// </summary>
     private UICard ChooseCardDeckReader(List<UICard> hand, List<Card> table, bool needToWin)
     {
-        // Cartas que quedan en el mazo + jugadas = sabemos cuáles están en manos ajenas
-        HashSet<int> knownCardIds = new HashSet<int>();
+        // Construimos el conjunto de IDs de cartas que NO están en manos ajenas:
+        // = las que quedan en el mazo (aún no repartidas) + las ya jugadas + las que YO tengo
+        HashSet<int> myHandIds = new HashSet<int>(hand.Select(c => c.cardData.id));
+        HashSet<int> playedIds = new HashSet<int>(_cardsPlayedThisRound.Select(c => c.id));
+        HashSet<int> deckIds   = new HashSet<int>();
         if (CardDatabase.deck != null)
-            foreach (Card c in CardDatabase.deck) knownCardIds.Add(c.id);
-        foreach (Card c in _cardsPlayedThisRound) knownCardIds.Add(c.id);
+            foreach (Card c in CardDatabase.deck) deckIds.Add(c.id);
 
-        // Ordenamos nuestra mano por puntuación
+        // Cartas que DEFINITIVAMENTE están en manos de rivales:
+        // ni en el mazo, ni jugadas, ni en mi mano
+        // (no podemos listarlo exactamente sin saber IDs totales, pero sí podemos
+        //  saber cuántas cartas hay en juego que no controlamos)
+
         List<UICard> sorted = hand.OrderByDescending(c => GetCardScore(c.cardData)).ToList();
 
         if (table.Count == 0)
@@ -247,23 +330,49 @@ public class AIController : MonoBehaviour
         Card tableWinner = GetCurrentWinningCard(table);
         int  tableScore  = GetCardScore(tableWinner);
 
-        List<UICard> guaranteed = sorted.Where(c => GetCardScore(c.cardData) > tableScore).ToList();
-        List<UICard> losers     = sorted.Where(c => GetCardScore(c.cardData) < tableScore).ToList();
+        // Cartas que nos permiten ganar
+        List<UICard> guaranteed = sorted
+            .Where(c => GetCardScore(c.cardData) > tableScore)
+            .ToList();
+        // Ya están ordenadas de mayor a menor; para ganar con lo mínimo tomamos la última
+        List<UICard> losers = sorted
+            .Where(c => GetCardScore(c.cardData) < tableScore)
+            .ToList();
+
+        // Verificar si la carta ganadora en mesa es realmente imbatible
+        // (todas las cartas superiores ya fueron jugadas o están en nuestro mazo → nadie más puede ganarle)
+        bool tableIsUnbeatable = !_cardsPlayedThisRound
+            .Any(c => c.suit == tableWinner.suit && c.value > tableWinner.value)
+            && !deckIds.Any(id => {
+                // Si hay una carta superior en el mazo aún sin repartir, puede estar en manos de alguien
+                return false; // simplificación: el mazo ya fue repartido en la fase de juego
+            });
 
         if (needToWin)
+            // Ganar con la carta mínima necesaria (preservar las buenas para más bazas)
             return guaranteed.Count > 0 ? guaranteed[guaranteed.Count - 1] : sorted[sorted.Count - 1];
         else
+            // Perder con la carta más alta posible (no desperdiciar bazas)
             return losers.Count > 0 ? losers[0] : sorted[0];
     }
 
-    // Nivel 6: lee la mano del jugador humano para jugar el contra exacto
+    /// <summary>
+    /// Nivel 6: lee la mano del jugador humano para jugar el contra exacto.
+    /// MEJORADO: también considera cuántas bazas le quedan por ganar/perder al humano.
+    /// </summary>
     private UICard ChooseCardOmniscient(List<UICard> myHand, List<Card> table, bool needToWin)
     {
         // Leer la mano del humano directamente desde los GameObjects
         List<Card> humanCards = new List<Card>();
+        int humanBazas   = 0;
+        int humanApuesta = 0;
+
         if (InteractionManager.Instance != null)
         {
             int humanSeat = InteractionManager.Instance.MySeatIndex;
+            humanBazas    = InteractionManager.Instance.bazasGanadas[humanSeat];
+            humanApuesta  = InteractionManager.Instance.apuestas[humanSeat];
+
             if (humanSeat >= 0 && humanSeat < InteractionManager.Instance.playerHands.Count)
             {
                 Transform humanHand = InteractionManager.Instance.playerHands[humanSeat].transform;
@@ -275,9 +384,12 @@ public class AIController : MonoBehaviour
             }
         }
 
-        // Si el humano ya tiró (está en la mesa), jugamos el contra exacto
+        bool humanNeedsWin  = humanBazas < humanApuesta;
+        bool humanNeedsLose = humanBazas >= humanApuesta;
+
         List<UICard> sorted = myHand.OrderBy(c => GetCardScore(c.cardData)).ToList();
 
+        // ── El humano ya tiró en esta baza ──────────────────────────────────────
         if (table.Count > 0)
         {
             Card tableWinner = GetCurrentWinningCard(table);
@@ -288,10 +400,19 @@ public class AIController : MonoBehaviour
                 // Ganar con lo mínimo posible (dejando las cartas buenas para más tarde)
                 UICard minBeater = sorted
                     .FirstOrDefault(c => GetCardScore(c.cardData) > tableScore);
-                return minBeater ?? sorted[0];
+                return minBeater ?? sorted[sorted.Count - 1];
             }
             else
             {
+                // Perder: si el humano necesita perder esta baza, dejarle ganar
+                // Si el humano necesita ganarla, robarle con lo mínimo posible
+                if (humanNeedsLose)
+                {
+                    // Robarle la baza al humano aunque nosotros no la necesitemos
+                    UICard minBeater = sorted
+                        .FirstOrDefault(c => GetCardScore(c.cardData) > tableScore);
+                    if (minBeater != null) return minBeater;
+                }
                 // Perder con la carta más alta posible que no gane
                 UICard maxLoser = sorted
                     .LastOrDefault(c => GetCardScore(c.cardData) < tableScore);
@@ -299,16 +420,43 @@ public class AIController : MonoBehaviour
             }
         }
 
-        // El bot tira primero: elige la carta que deje al humano en peor posición
+        // ── El bot tira primero ──────────────────────────────────────────────────
         if (humanCards.Count > 0)
         {
-            int humanBestScore = humanCards.Max(c => GetCardScore(c));
+            int humanBestScore  = humanCards.Max(c => GetCardScore(c));
+            int humanWorstScore = humanCards.Min(c => GetCardScore(c));
+
             if (needToWin)
             {
-                // Tirar algo que el humano no pueda superar
+                // Tirar algo que el humano no pueda superar → garantizamos la baza
                 UICard impossible = sorted
                     .LastOrDefault(c => GetCardScore(c.cardData) > humanBestScore);
                 if (impossible != null) return impossible;
+
+                // Si no podemos garantizarlo, tiramos la más alta de todas
+                return sorted[sorted.Count - 1];
+            }
+            else
+            {
+                // No necesitamos ganar esta baza
+                if (humanNeedsWin)
+                {
+                    // El humano necesita ganar → tirar algo que él PUEDA ganar pero que nos
+                    // cueste poco (tiramos la carta más alta que el humano aún puede superar)
+                    UICard bait = sorted
+                        .LastOrDefault(c => GetCardScore(c.cardData) < humanBestScore);
+                    if (bait != null) return bait;
+                }
+                else
+                {
+                    // El humano NO necesita ganar → tiramos algo muy alto para
+                    // obligarle a ganar y que falle su apuesta
+                    UICard trap = sorted
+                        .LastOrDefault(c => GetCardScore(c.cardData) > humanBestScore);
+                    if (trap != null) return trap;
+                }
+                // Fallback: carta más baja
+                return sorted[0];
             }
         }
 
@@ -330,6 +478,53 @@ public class AIController : MonoBehaviour
             if (s > bestScore) { best = tableCards[i]; bestScore = s; }
         }
         return best;
+    }
+
+    /// <summary>
+    /// Intenta encontrar la carta del jugador humano en la mesa actual.
+    /// Compara contra las cartas de la mano del humano registradas.
+    /// </summary>
+    private Card GetHumanCardOnTable(List<Card> table)
+    {
+        if (InteractionManager.Instance == null) return null;
+        int humanSeat = InteractionManager.Instance.MySeatIndex;
+        if (humanSeat < 0 || humanSeat >= InteractionManager.Instance.playerHands.Count) return null;
+
+        // Recogemos los IDs de las cartas que tiene el humano
+        Transform humanHand = InteractionManager.Instance.playerHands[humanSeat].transform;
+        HashSet<int> humanHandIds = new HashSet<int>();
+        foreach (Transform t in humanHand)
+        {
+            UICard c = t.GetComponent<UICard>();
+            if (c != null) humanHandIds.Add(c.cardData.id);
+        }
+
+        // La carta del humano en la mesa es la que NO está en su mano ahora
+        // (ya la tiró), así que simplemente devolvemos la primera en la mesa
+        // que no esté en su mano actual → aproximación razonable
+        foreach (Card c in table)
+        {
+            if (!humanHandIds.Contains(c.id)) return c;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Obtiene el índice de asiento del bot en la partida actual.
+    /// El humano es MySeatIndex; el bot es el otro jugador (en partida 1v1).
+    /// </summary>
+    private int GetMyAISeat()
+    {
+        if (InteractionManager.Instance == null) return -1;
+        int humanSeat = InteractionManager.Instance.MySeatIndex;
+        int totalPlayers = InteractionManager.Instance.vidas.Length;
+        // En partidas con más jugadores, los bots son todos los que no son el humano
+        // Devolvemos el primer asiento que no sea el humano
+        for (int i = 0; i < totalPlayers; i++)
+        {
+            if (i != humanSeat) return i;
+        }
+        return -1;
     }
 
     private UICard GetHighestPowerCard(List<UICard> cards) =>

@@ -101,6 +101,7 @@ public class MatchRecord
     public int position = 0;                // Puesto final (1 = ganador)
     public int totalPlayers = 0;            // Jugadores en la partida
     public List<string> playerNames = new List<string>(); // Nombres de todos los participantes
-    public int moneyChange = 0;             // +ganado o -perdido
+    public int moneyChange = 0;             // +ganado o -perdido (privadas)
+    public int trophyChange = 0;            // +ganados o -perdidos (solo públicas)
     public string status = "";              // Ej: "", "Abandonada", "Interrumpida"
 }

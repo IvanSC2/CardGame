@@ -9,9 +9,7 @@ public class HandLayoutFanner : MonoBehaviour
 {
 
     [Header("Separación Dinámica (Tus cálculos exactos)")]
-
     public float spacing5Cartas = -70f;  
-
     public float spacing4Cartas = -252f;  
 
     public float spacing3Cartas = -446f;  
@@ -116,7 +114,19 @@ public class HandLayoutFanner : MonoBehaviour
 
             float currentYRot = pasosDesdeCentro * gradosYPorPaso * direccionGiroY;
 
-           
+            
+
+            // TRUCO: Evitar que la carta del medio desaparezca al estar en mesas laterales a -90 grados (de perfil exacto)
+            if (currentYRot == 0f) 
+            {
+                float anguloMesa = transform.eulerAngles.y;
+                if (Mathf.Abs(anguloMesa - 90f) < 5f || Mathf.Abs(anguloMesa - 270f) < 5f)
+                {
+                    currentYRot = 5f; 
+                }
+            }  
+
+
 
             float currentZ = zCentro - (fuerzaCaidaZ * pasosAlCuadrado);
 

@@ -1,6 +1,7 @@
 using UnityEngine;
 using Unity.Netcode;
 using Unity.Services.Core;
+using Unity.Services.Core.Environments;
 using Unity.Services.Authentication;
 using Unity.Services.Multiplayer;
 using System.Threading;
@@ -34,6 +35,7 @@ public class SessionNetworkManager : MonoBehaviour
             {
                 Debug.Log("[1/3] Inicializando UGS...");
                 InitializationOptions options = new InitializationOptions();
+                options.SetEnvironmentName("production");
 #if UNITY_EDITOR
                 options.SetProfile("Jugador_" + System.Guid.NewGuid().ToString().Substring(0, 6));
 #endif
@@ -50,6 +52,10 @@ public class SessionNetworkManager : MonoBehaviour
                 if (ProfileManager.Instance != null) 
                 {
                     await ProfileManager.Instance.CargarPerfilCompleto();
+
+                    // Subir a la nube cualquier partida jugada sin internet
+                    await ProfileManager.Instance.SubirPendientesALaNube();
+
                     // Mostramos el panel de bienvenida SOLO si estamos en el menú y no tiene nombre
                     if (!ProfileManager.Instance.TieneNickname() && MenuManager.Instance != null && MenuManager.Instance.welcomePanel != null)
                     {
@@ -266,7 +272,7 @@ public class SessionNetworkManager : MonoBehaviour
             
             // MONETIZACIÓN: Configuramos la partida (Pública)
             GameConfig.currentFee = feeFijo;
-            GameConfig.currentPrize = premioTotal;
+            GameConfig.currentPrize = feeFijo * currentSession.Players.Count;
             GameConfig.isPrivateMatch = false;
             GameConfig.isHostLobby = currentSession.IsHost;
             GameConfig.prizeAwarded = false;
@@ -340,7 +346,10 @@ public class SessionNetworkManager : MonoBehaviour
                 if (MenuManager.Instance != null)
                 {
                     MenuManager.Instance.MostrarHub();
-                    MenuManager.Instance.MostrarPopupInfo("Error inesperado en la sesión. Vuelves al menú principal.");
+                    if (!abandonandoVoluntariamente && (matchmakingCts == null || !matchmakingCts.IsCancellationRequested))
+                    {
+                        MenuManager.Instance.MostrarPopupInfo("Error inesperado en la sesión. Vuelves al menú principal.");
+                    }
                 }
             }
         }
@@ -413,8 +422,8 @@ public class SessionNetworkManager : MonoBehaviour
 
                     if (GameConfig.isPrivateMatch)
                     {
-                        // Privada: Devolvemos fee y repartimos la penalización del host + el fee de los que huyeron
-                        int poolTotal = 2 * GameConfig.currentFee * (GameConfig.nHumanPlayers - 1);
+                        // El host siempre pierde fee×2. Ese pool se reparte entre supervivientes por igual.
+                        int poolTotal = 2 * GameConfig.currentFee;
                         int recompensa = poolTotal / clientesVivos;
                         
                         TopBarUI.Instance.ActualizarMonedas(recompensa);
@@ -448,26 +457,36 @@ public class SessionNetworkManager : MonoBehaviour
                         // --- TROFEOS: El host recibe la penalización de su puesto actual ---
                         if (!GameConfig.trophyAwarded && GameConfig.currentMatchMode == "public")
                         {
+                            int totalPlayers = InteractionManager.Instance != null ? InteractionManager.Instance.totalPlayers : GameConfig.nPlayers;
                             int puestoHost = Mathf.Max(1, clientesVivos);
-                            int indiceHost = Mathf.Clamp(puestoHost - 1, 0, GameConfig.trophyDeltaByRank.Length - 1);
-                            int deltaHost = GameConfig.trophyDeltaByRank[indiceHost];
-                            int trofeosPerdidosHost = Mathf.Abs(Mathf.Min(0, deltaHost));
+                            
+                            // El host recibe la penalización de perder según el puesto del abandono
+                            int trofeosPerdidosHost = GameConfig.CalcularTrofeosPerdidos(puestoHost, totalPlayers);
+                            if (trofeosPerdidosHost == 0) trofeosPerdidosHost = 20; // Castigo mínimo por ragequit del host
 
                             int boteTotal = GameConfig.trophyBote + trofeosPerdidosHost;
-                            int supervivientesReales = Mathf.Max(1, clientesVivos); // Ahora sí dividimos entre los que quedan
-                            int trofeosPorSuperviviente = supervivientesReales > 0 ? boteTotal / supervivientesReales : 0;
+                            int supervivientesReales = Mathf.Max(1, clientesVivos);
+                            int trofeosPorSuperviviente = boteTotal / supervivientesReales;
 
                             // TROFEOS GARANTIZADOS: El cliente sobrevive y el host se rinde.
                             // Le damos como mínimo los trofeos del peor puesto que tenían asegurado.
-                            int miIndiceGarantizado = Mathf.Clamp(clientesVivos - 1, 0, GameConfig.trophyDeltaByRank.Length - 1);
-                            int misTrofeosGarantizados = GameConfig.trophyDeltaByRank[miIndiceGarantizado];
-                            if (misTrofeosGarantizados < 0) misTrofeosGarantizados = 0; // No restamos si iba perdiendo y el host se fue
+                            int misTrofeosGarantizados = 0;
+                            if (clientesVivos == 1)
+                            {
+                                // Iba a ganar seguro (era el único superviviente)
+                                misTrofeosGarantizados = 30;
+                            }
+                            else if (clientesVivos == 2)
+                            {
+                                // Iba a quedar 2º como mínimo
+                                misTrofeosGarantizados = 10;
+                            }
 
                             TopBarUI.QueuePendingDelta(trofeosPorSuperviviente + misTrofeosGarantizados);
                             GameConfig.trophyAwarded = true;
                             GameConfig.trophyBote = 0;
 
-                            Debug.Log($"[TROFEOS] Host abandonó. Bote repartido: +{trofeosPorSuperviviente}. Rango Garantizado: +{misTrofeosGarantizados}. Total encolado: {trofeosPorSuperviviente + misTrofeosGarantizados}");
+                            Debug.Log($"[TROFEOS SUMA-CERO] Host abandonó. Bote repartido: +{trofeosPorSuperviviente}. Rango Garantizado: +{misTrofeosGarantizados}. Total encolado: {trofeosPorSuperviviente + misTrofeosGarantizados}");
                         }
 
                         if (ProfileManager.Instance != null)
@@ -514,7 +533,10 @@ public class SessionNetworkManager : MonoBehaviour
                 if (MenuManager.Instance != null)
                 {
                     MenuManager.Instance.MostrarHub();
-                    MenuManager.Instance.MostrarPopupInfo("La conexión con la sala se ha perdido. Has vuelto al menú principal.");
+                    if (!abandonandoVoluntariamente)
+                    {
+                        MenuManager.Instance.MostrarPopupInfo("La conexión con la sala se ha perdido. Has vuelto al menú principal.");
+                    }
                 }
                 LoadingManager.Instance?.OcultarCargando();
             }
@@ -536,8 +558,11 @@ public class SessionNetworkManager : MonoBehaviour
     // =========================================================================
     // 4. ABANDONAR / CANCELAR SALA (BLINDADO CONTRA WARNINGS)
     // =========================================================================
-   public async Task AbandonarSala(bool sesionYaDestruidaExternamente = false)
+    public bool abandonandoVoluntariamente = false;
+
+    public async Task AbandonarSala(bool sesionYaDestruidaExternamente = false)
     {
+        abandonandoVoluntariamente = true;
         matchmakingCts?.Cancel();
         
         // Chivato para saber si UGS ya se encargó de apagar Netcode
@@ -581,6 +606,10 @@ public class SessionNetworkManager : MonoBehaviour
                 NetworkManager.Singleton.Shutdown();
             }
         }
+        
+        // Pequeña pausa para asegurar la limpieza antes de limpiar el flag
+        await Task.Delay(100);
+        abandonandoVoluntariamente = false;
     }
 
     private void OnDestroy()

@@ -34,6 +34,13 @@ public class ProfileManager : MonoBehaviour
     private const string KEY_STATS   = "PlayerStats";
     private const string KEY_HISTORY = "MatchHistory";
 
+    // ─── CLAVES DE RESPALDO LOCAL (PlayerPrefs) ────────────────────────────
+    // Se usan cuando no hay internet para no perder resultados de partidas.
+    // Al reconectarse, los datos locales se fusionan con la nube.
+    private const string LOCAL_STATS   = "LocalBackup_Stats";
+    private const string LOCAL_HISTORY = "LocalBackup_History";
+    private const string LOCAL_DIRTY   = "LocalBackup_Dirty";
+
     // ─── SINGLETON ─────────────────────────────────────────────────────────
     private void Awake()
     {
@@ -130,6 +137,12 @@ public class ProfileManager : MonoBehaviour
 
     public async Task GuardarEstadisticas()
     {
+        // 1. Siempre guardar localmente primero (funciona sin internet)
+        PlayerPrefs.SetString(LOCAL_STATS, JsonUtility.ToJson(Stats));
+        PlayerPrefs.SetInt(LOCAL_DIRTY, 1);
+        PlayerPrefs.Save();
+
+        // 2. Intentar subir a la nube
         try
         {
             string json = JsonUtility.ToJson(Stats);
@@ -137,14 +150,20 @@ public class ProfileManager : MonoBehaviour
             await CloudSaveService.Instance.Data.Player.SaveAsync(data);
             Debug.Log("[PERFIL] Estadísticas guardadas en la nube.");
         }
-        catch (System.Exception e)
+        catch (System.Exception)
         {
-            Debug.LogError($"[PERFIL] Error al guardar estadísticas: {e.Message}");
+            Debug.LogWarning("[PERFIL] Sin internet — estadísticas guardadas localmente. Se subirán al reconectarse.");
         }
     }
 
     public async Task GuardarHistorial()
     {
+        // 1. Siempre guardar localmente primero (funciona sin internet)
+        PlayerPrefs.SetString(LOCAL_HISTORY, JsonUtility.ToJson(History));
+        PlayerPrefs.SetInt(LOCAL_DIRTY, 1);
+        PlayerPrefs.Save();
+
+        // 2. Intentar subir a la nube
         try
         {
             string json = JsonUtility.ToJson(History);
@@ -152,10 +171,112 @@ public class ProfileManager : MonoBehaviour
             await CloudSaveService.Instance.Data.Player.SaveAsync(data);
             Debug.Log("[PERFIL] Historial guardado en la nube.");
         }
+        catch (System.Exception)
+        {
+            Debug.LogWarning("[PERFIL] Sin internet — historial guardado localmente. Se subirá al reconectarse.");
+        }
+    }
+
+    // =====================================================================
+    // SINCRONIZACIÓN OFFLINE → NUBE
+    // Llamar justo después de CargarPerfilCompleto() al reconectarse.
+    // Fusiona los datos jugados offline con los que había en la nube.
+    // =====================================================================
+    public async Task SubirPendientesALaNube()
+    {
+        if (PlayerPrefs.GetInt(LOCAL_DIRTY, 0) == 0) return; // Nada pendiente
+
+        Debug.Log("[PERFIL] Datos offline detectados. Fusionando con la nube...");
+
+        try
+        {
+            // --- Fusionar estadísticas ---
+            string localStatsJson = PlayerPrefs.GetString(LOCAL_STATS, "");
+            if (!string.IsNullOrEmpty(localStatsJson))
+            {
+                var localStats = JsonUtility.FromJson<PlayerStats>(localStatsJson);
+                Stats = FusionarStats(Stats, localStats);
+            }
+
+            // --- Fusionar historial ---
+            string localHistoryJson = PlayerPrefs.GetString(LOCAL_HISTORY, "");
+            if (!string.IsNullOrEmpty(localHistoryJson))
+            {
+                var localHistory = JsonUtility.FromJson<MatchHistoryData>(localHistoryJson);
+                FusionarHistorial(localHistory);
+            }
+
+            // --- Subir el resultado fusionado ---
+            await Task.WhenAll(GuardarEstadisticasNube(), GuardarHistorialNube());
+
+            // --- Limpiar el flag offline ---
+            PlayerPrefs.SetInt(LOCAL_DIRTY, 0);
+            PlayerPrefs.DeleteKey(LOCAL_STATS);
+            PlayerPrefs.DeleteKey(LOCAL_HISTORY);
+            PlayerPrefs.Save();
+
+            Debug.Log("[PERFIL] ¡Datos offline sincronizados con la nube correctamente!");
+        }
         catch (System.Exception e)
         {
-            Debug.LogError($"[PERFIL] Error al guardar historial: {e.Message}");
+            Debug.LogWarning($"[PERFIL] No se pudieron subir los datos offline ahora: {e.Message}");
         }
+    }
+
+    /// <summary>Fusiona dos PlayerStats tomando los valores máximos de cada campo.</summary>
+    private PlayerStats FusionarStats(PlayerStats nube, PlayerStats local)
+    {
+        nube.practice    = FusionarModeStats(nube.practice,    local.practice);
+        nube.privateMatch = FusionarModeStats(nube.privateMatch, local.privateMatch);
+        nube.publicMatch  = FusionarModeStats(nube.publicMatch,  local.publicMatch);
+        return nube;
+    }
+
+    private ModeStats FusionarModeStats(ModeStats nube, ModeStats local)
+    {
+        return new ModeStats
+        {
+            gamesPlayed          = Mathf.Max(nube.gamesPlayed,          local.gamesPlayed),
+            gamesWon             = Mathf.Max(nube.gamesWon,             local.gamesWon),
+            highestWinRow        = Mathf.Max(nube.highestWinRow,        local.highestWinRow),
+            currentWinRow        = Mathf.Max(nube.currentWinRow,        local.currentWinRow),
+            totalMoneyEarned     = Mathf.Max(nube.totalMoneyEarned,     local.totalMoneyEarned),
+            hardestWinDifficulty = Mathf.Max(nube.hardestWinDifficulty, local.hardestWinDifficulty)
+        };
+    }
+
+    /// <summary>Añade al historial en memoria los registros locales que no existan ya (por fecha).</summary>
+    private void FusionarHistorial(MatchHistoryData local)
+    {
+        var fechasNube = new System.Collections.Generic.HashSet<string>();
+        foreach (var r in History.matches) fechasNube.Add(r.date);
+
+        foreach (var r in local.matches)
+        {
+            if (!fechasNube.Contains(r.date))
+                History.matches.Insert(0, r); // Añadir al principio (más reciente)
+        }
+
+        // Ordenar por fecha descendente y recortar al límite
+        History.matches.Sort((a, b) => string.Compare(b.date, a.date, System.StringComparison.Ordinal));
+        while (History.matches.Count > MatchHistoryData.MAX_RECORDS)
+            History.matches.RemoveAt(History.matches.Count - 1);
+    }
+
+    /// <summary>Guarda estadísticas SOLO en la nube (sin tocar el backup local).</summary>
+    private async Task GuardarEstadisticasNube()
+    {
+        string json = JsonUtility.ToJson(Stats);
+        var data = new Dictionary<string, object> { { KEY_STATS, json } };
+        await CloudSaveService.Instance.Data.Player.SaveAsync(data);
+    }
+
+    /// <summary>Guarda historial SOLO en la nube (sin tocar el backup local).</summary>
+    private async Task GuardarHistorialNube()
+    {
+        string json = JsonUtility.ToJson(History);
+        var data = new Dictionary<string, object> { { KEY_HISTORY, json } };
+        await CloudSaveService.Instance.Data.Player.SaveAsync(data);
     }
 
     // =====================================================================
@@ -171,9 +292,10 @@ public class ProfileManager : MonoBehaviour
     /// <param name="moneyChange">Dinero ganado (+) o perdido (-)</param>
     /// <param name="playerNames">Lista de nombres de los jugadores</param>
     /// <param name="difficulty">Dificultad de los bots (solo para Practice)</param>
+    /// <param name="trophyChange">Trofeos ganados (+) o perdidos (-). Solo para partidas públicas.</param>
     public async void RegistrarResultadoPartida(
         string mode, int position, int totalPlayers,
-        int moneyChange, List<string> playerNames = null, int difficulty = 0, string status = "")
+        int moneyChange, List<string> playerNames = null, int difficulty = 0, string status = "", int trophyChange = 0)
     {
         // --- Actualizar estadísticas ---
         ModeStats modeStats = Stats.GetByMode(mode);
@@ -206,6 +328,7 @@ public class ProfileManager : MonoBehaviour
             position = position,
             totalPlayers = totalPlayers,
             moneyChange = moneyChange,
+            trophyChange = trophyChange,
             playerNames = playerNames ?? new List<string>(),
             status = status
         };
