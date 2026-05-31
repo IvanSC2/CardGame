@@ -434,20 +434,17 @@ public class InteractionManager : NetworkBehaviour
         SetInfoMessage($"<color=#FF5555><b>{nombreReal}</b></color> se ha desconectado.", 5f);
         ActualizarTodosLosPerfilesUI();
 
-        // Si ya estamos en GameOver (por TerminarPartidaPorAbandonoClientRpc u otro motivo), no hacer nada más
         if (PauseManager.Instance != null && PauseManager.Instance.isGameOver) return;
+        if (PauseManager.Instance != null && PauseManager.Instance.isSpectating) return;
 
-        // Cada cliente comprueba si, al irse este, él se ha quedado solo en la sala
         int humanosVivos = 0;
         for (int i = 0; i < totalPlayers; i++)
         {
-            // Usamos _seatToClient para saber qué clientId ocupa el asiento i
             if (vidas[i] > 0 && _seatToClient.TryGetValue(i, out ulong cid)
                 && NetworkManager.Singleton.ConnectedClients.ContainsKey(cid))
                 humanosVivos++;
         }
 
-        // Si me he quedado yo solo como humano vivo, gano automáticamente
         if (humanosVivos <= 1 && vidas[_mySeatIndex] > 0)
         {
             if (PauseManager.Instance != null) PauseManager.Instance.TriggerGameOver(1);

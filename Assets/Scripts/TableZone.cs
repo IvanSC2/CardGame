@@ -295,13 +295,18 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
         int jugadoresVivos = 0;
         int totalPlayers = InteractionManager.Instance.totalPlayers;
 
+        // Snapshot de vidas antes de decrementar
+        int[] vidasAntes = new int[totalPlayers];
+        for (int i = 0; i < totalPlayers; i++)
+            vidasAntes[i] = InteractionManager.Instance.vidas[i];
+
         for (int i = 0; i < totalPlayers; i++)
         {
             if (InteractionManager.Instance.vidas[i] <= 0) continue;
 
             int bazas = InteractionManager.Instance.bazasGanadas[i];
             int apuesta = InteractionManager.Instance.apuestas[i];
-            string nombre = InteractionManager.Instance.GetPlayerName(i); // Esto lo mantengo para los logs del server
+            string nombre = InteractionManager.Instance.GetPlayerName(i);
 
             InteractionManager.Instance.bazasTotales[i] += bazas;
 
@@ -332,8 +337,8 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
             mensajeResultado += "<color=#55FF55>¡Todos los jugadores salvan sus vidas!</color>";
         }
 
-        // Enviamos la resolución al resto de jugadores (para que actualicen vidas/texto)
-        SincronizarResolucionRondaClientRpc(mensajeResultado, InteractionManager.Instance.vidas, InteractionManager.Instance.bazasTotales, InteractionManager.Instance.apuestasAcertadasTotales);
+        // Enviamos la resolución al resto de jugadores
+        SincronizarResolucionRondaClientRpc(mensajeResultado, vidasAntes, InteractionManager.Instance.vidas, InteractionManager.Instance.bazasTotales, InteractionManager.Instance.apuestasAcertadasTotales);
 
         if (jugadoresVivos > 1)
         {
@@ -342,13 +347,14 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
     }
 
     [Rpc(SendTo.Everyone)]
-    private void SincronizarResolucionRondaClientRpc(string mensaje, int[] vidasServidor, int[] bazasTot, int[] apuestasAcertadasTot)
+    private void SincronizarResolucionRondaClientRpc(string mensaje, int[] vidasAntes, int[] vidasServidor, int[] bazasTot, int[] apuestasAcertadasTot)
     {
         InteractionManager.Instance.SetInfoMessage(mensaje, 7f);
         
         int localId = InteractionManager.Instance.MySeatIndex;
-        // Comprobamos nuestra vida ANTES de actualizar
-        bool estabaVivo = InteractionManager.Instance.vidas[localId] > 0;
+
+        // Usamos vidasAntes (snapshot pre-decremento) para saber si estábamos vivos antes de esta ronda
+        bool estabaVivo = vidasAntes[localId] > 0;
 
         for (int i = 0; i < InteractionManager.Instance.totalPlayers; i++)
         {
@@ -367,9 +373,7 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
 
         // Actualizar el castigo dinámico de ragequit según los que queden vivos
         if (PauseManager.Instance != null)
-        {
             PauseManager.Instance.UpdateAntiRageQuitPenalty();
-        }
 
         // --- CADA CLIENTE JUZGA SU PROPIO GAME OVER ---
         if (estabaVivo && !sigoVivo)
@@ -383,11 +387,25 @@ public class TableZone : NetworkBehaviour, IPointerClickHandler
             // Quedo yo solo en la mesa, soy el ganador
             StartCoroutine(DelayedGameOver(1, 2f));
         }
+
+        // Si la partida terminó y hay espectadores, mostrarles la pantalla final
+        if (jugadoresVivos <= 1 && PauseManager.Instance != null && PauseManager.Instance.isSpectating)
+            StartCoroutine(DelayedNotificarEspectador(2.5f));
+    }
+
+    private System.Collections.IEnumerator DelayedNotificarEspectador(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        if (PauseManager.Instance != null && PauseManager.Instance.isSpectating)
+            PauseManager.Instance.NotificarFinPartidaDefinitivo();
     }
 
     private System.Collections.IEnumerator DelayedGameOver(int puesto, float delay)
     {
         yield return new WaitForSeconds(delay);
+
+        // Si somos espectador no disparamos GameOver de nuevo
+        if (PauseManager.Instance != null && PauseManager.Instance.isSpectating) yield break;
 
         // TROFEOS: Si es una partida pública y el jugador acaba de morir (no es el ganador final),
         // contribuimos con los trofeos que pierde al bote, para que los supervivientes los recojan.
